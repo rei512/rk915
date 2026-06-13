@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef _IF_IO_H_
 #define _IF_IO_H_
 
@@ -20,14 +21,22 @@ enum FW_ERR_REASON {
 
 #define MAX_RX_SERIAS_COUNT	16
 #define MAX_RX_SERIAS_BYTES	(MAX_RX_SERIAS_COUNT * MAX_DATA_SIZE_2K + 512)
+/* rx descriptors carry at most MAX_RX_SERIAS_COUNT subframes */
+#define CHECK_RX_PKT_CNT(x)	((x) >= 1 && (x) <= MAX_RX_SERIAS_COUNT)
+
+struct hal_priv;
+
 struct host_io_info {
+	struct hal_priv		*hal;
 	struct device		*dev;
 	unsigned int		irq;
 	bool				irq_request;
-	struct host_io_ops 	*io_ops;
+	atomic_t			irq_masked;
+	bool				clk_claimed;
+	struct host_io_ops	*io_ops;
 	unsigned char		type;
-	void*			rx_serias_buf;
-	void*			rx_serias_buf_curr;
+	void *rx_serias_buf;
+	void *rx_serias_buf_curr;
 	unsigned short		rx_serias_len[MAX_RX_SERIAS_COUNT];
 	int			rx_serias_count;
 	int			rx_serias_idx;
@@ -66,14 +75,19 @@ struct host_io_ops {
 #endif
 };
 
-void rk915_sdio_pre_init(void);
-int rk915_sdio_init(struct host_io_info *phost);
+struct hal_priv *rk915_core_init(void);
+void rk915_core_deinit(struct hal_priv *priv);
+int rk915_device_probe(struct hal_priv *priv);
+void rk915_device_remove(struct hal_priv *priv);
 int rk915_sdio_deinit(struct host_io_info *phost);
 int rk915_sdio_recovery_init(struct host_io_info *phost);
-void rk915_signal_io_error(int reason);
+void rk915_signal_io_error(struct hal_priv *hal, int reason);
 int rk915_sdio_register_driver(void);
 void rk915_sdio_unregister_driver(void);
 void rk915_sdio_set_clock(struct host_io_info *phost, int hz);
+int rk915_sdio_power_cycle(struct host_io_info *host);
+void rk915_sdio_release_irq(struct host_io_info *host);
+void rk915_sdio_clock_release(struct host_io_info *host);
 
 #endif
 

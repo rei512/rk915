@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef IF_SDIO_H
 #define IF_SDIO_H
 
@@ -30,7 +31,7 @@ enum sdio_rw_op_type {
  * SDIO_HOST_READ_REG_WRITE_EN[0]=1'b0: host write disable
  * SDIO_HOST_READ_REG_WRITE_EN[7:1]: reason code(reserved)
  */
-#define SDIO_HOST_READ_REG_WRITE_EN			0 
+#define SDIO_HOST_READ_REG_WRITE_EN			0
 
 /* Host need to check this reg before read operation.
  * for read to read
@@ -73,16 +74,16 @@ enum FW_STATE {
  *      2'b10:PKT
  *      2'b11:PATCH
  *
- * SDIO_HOST_WRITE_REG_PKT_INFO[1:0]=2'b00: type=CMD, 
+ * SDIO_HOST_WRITE_REG_PKT_INFO[1:0]=2'b00: type=CMD,
  * SDIO_HOST_WRITE_REG_PKT_INFO[7:2]:CMDID
  *
- * SDIO_HOST_WRITE_REG_PKT_INFO[1:0]=2'b01: type=PKT, 
+ * SDIO_HOST_WRITE_REG_PKT_INFO[1:0]=2'b01: type=PKT,
  * SDIO_HOST_WRITE_REG_PKT_INFO[3:2]:pkt type(AMPDU/AMSDU/MPDU)
  * pkt type:
  *      2'b01:MPDU
  *      2'b10:AMSDU
  *      2'b11:AMPDU
- * SDIO_HOST_WRITE_REG_PKT_INFO[3:2]=2'b11, 
+ * SDIO_HOST_WRITE_REG_PKT_INFO[3:2]=2'b11,
  * SDIO_HOST_WRITE_REG_PKT_INFO[7:4]:AMPDU PKT SEQ
  */
 #define SDIO_HOST_WRITE_REG_PKT_INFO		17
@@ -116,8 +117,8 @@ enum FW_STATE {
 #define IO_PATCH_ADDR			SDIO_HOST_PATCH_ADDR
 #define IO_START_CMD_ID			SDIO_START_CMD_ID
 
-#define IO_RECV_LEN_L 			SDIO_HOST_READ_REG_RECV_LEN_L
-#define IO_RECV_LEN_H 			SDIO_HOST_READ_REG_RECV_LEN_H
+#define IO_RECV_LEN_L			SDIO_HOST_READ_REG_RECV_LEN_L
+#define IO_RECV_LEN_H			SDIO_HOST_READ_REG_RECV_LEN_H
 
 #define IO_INT_ADDR			SDIO_HOST_WRITE_REG_INT_ADDR
 #define IO_INT_CLR_IRQ_VAL		SDIO_HOST_WRITE_REG_CLR_INT
