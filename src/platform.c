@@ -1,14 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#include <linux/irq.h>
 #include <linux/rfkill.h>
 
 #include "core.h"
 #include "if_io.h"
 #include "platform.h"
 
-extern int hal_irq_handler(struct hal_priv *p);
 
-void rk915_rescan_card(unsigned insert)
+void rk915_rescan_card(unsigned int insert)
 {
-    //rockchip_wifi_set_carddetect(insert);
+	//rockchip_wifi_set_carddetect(insert);
 }
 
 void rk915_poweron(void)
@@ -23,42 +24,70 @@ void rk915_poweroff(void)
 	//rockchip_wifi_power(0);
 }
 
-static irqreturn_t hal_interrupt(int irq, void *dev_id)
+/* The host-wake line stays asserted until the rx thread drains the
+ * chip's event queue, so the level irq must stay masked from handler
+ * entry until the drain completes or it refires continuously.
+ */
+void rk915_irq_enable(struct hal_priv *priv, int enable)
 {
-	hal_irq_handler(hpriv);
-	return IRQ_HANDLED;
+	struct host_io_info *host = priv ? priv->io_info : NULL;
+
+	if (!host || !host->irq_request)
+		return;
+
+	if (enable) {
+		if (atomic_xchg(&host->irq_masked, 0))
+			enable_irq(host->irq);
+	} else {
+		if (!atomic_xchg(&host->irq_masked, 1))
+			disable_irq_nosync(host->irq);
+	}
 }
 
-void rk915_irq_enable(int enable)
+static irqreturn_t hal_interrupt(int irq, void *dev_id)
 {
-	/*if (enable) {
-		enable_irq(hpriv->io_info->irq);
-	} else {
-		disable_irq(hpriv->io_info->irq);
-	}*/
+	hal_irq_handler(dev_id);
+	return IRQ_HANDLED;
 }
 
 int rk915_register_irq(struct host_io_info *host)
 {
+	unsigned long flags;
 	int ret;
-	if (host->irq <= 0) { return 0; }
-	
-	ret = devm_request_irq(host->dev, host->irq, hal_interrupt,
-				IRQF_TRIGGER_RISING|IRQF_NO_SUSPEND, "rk915", hpriv);
-	if (ret == 0) {
-		ret = enable_irq_wake(host->irq);
-		rk915_irq_enable(0);
+
+	/* the in-band SDIO interrupt is claimed at probe (it also keeps
+	 * the bus clock running); nothing more to do without a host-wake
+	 * line
+	 */
+	if (host->irq <= 0)
+		return 0;
+
+	/* already requested by a previous bring-up */
+	if (host->irq_request)
+		return 0;
+
+	/* trigger type comes from the DT interrupt specifier */
+	flags = irq_get_trigger_type(host->irq);
+	if (!(flags & IRQF_TRIGGER_MASK))
+		flags = IRQF_TRIGGER_RISING;
+
+	ret = devm_request_threaded_irq(host->dev, host->irq, NULL,
+					hal_interrupt, flags | IRQF_ONESHOT,
+					"rk915", host->hal);
+	if (ret == 0)
 		host->irq_request = true;
-	}
 
 	return ret;
 }
 
 int rk915_free_irq(struct host_io_info *host)
 {
-	if (host->irq <= 0) { return 0; }
+	if (host->irq <= 0) {
+		rk915_sdio_release_irq(host);
+		return 0;
+	}
 	if (host->irq_request) {
-		devm_free_irq(host->dev, host->irq, hpriv);
+		devm_free_irq(host->dev, host->irq, host->hal);
 		host->irq_request = false;
 	}
 
@@ -77,10 +106,13 @@ void rk915_bus_unregister_driver(void)
 
 int rk915_platform_bus_init(struct host_io_info *phost)
 {
-	if (!phost->bus_init)
-		return rk915_sdio_init(phost);
-	else
-		return 0;
+	/* The SDIO bus is wired up in sdio_probe() before we get here */
+	if (!phost->bus_init) {
+		rk915_err("%s: bus not initialized\n", __func__);
+		return -ENODEV;
+	}
+
+	return 0;
 }
 
 int rk915_platform_bus_rec_init(struct host_io_info *phost)
