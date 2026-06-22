@@ -1,23 +1,19 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Copyright (c) 2021, Fuzhou Rockchip Electronics Co., Ltd
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #ifndef _HAL_COMMON_H_
 #define _HAL_COMMON_H_
 #include "rpu.h"
 
+struct hal_priv;
+
 typedef int (*msg_handler)(void *nbuff);
-extern struct hal_priv *hpriv;
-extern char *mac_addr;
 extern const char *hal_name;
-struct device *hal_get_dev(void);
-extern bool waiting_for_rpu_ready;
+struct device *hal_get_dev(struct hal_priv *priv);
 extern bool block_rpu_comm;
+int hal_irq_handler(struct hal_priv *p);
 
 enum PROBE_STATUS {
 	PROBE_INIT,
@@ -26,7 +22,7 @@ enum PROBE_STATUS {
 	PROBE_SUCCESS,
 	PROBE_FAILED
 };
-	
+
 enum RPU_SLEEP_TYPE {
 	RPU_SLEEP = 0,
 	RPU_AWAKE,
@@ -52,56 +48,25 @@ struct io_tx_ctrl_info {
 	unsigned int patch_len;
 };
 
-typedef struct {
-	void *parent;  /* some external entity that the thread supposed to work for */
-	char *proc_name;
-	struct task_struct *p_task;
-	long thr_pid;
-	int prio; /* priority */
-	struct semaphore sema;
-	int terminated;
-	struct completion completed;
-	spinlock_t spinlock;
-	int up_cnt;
-} tsk_ctl_t;
-
-#define TRUE 1
-#define FALSE 0
-
-#define PROC_START(thread_func, owner, tsk_ctl, flags, name) \
-{ \
-        sema_init(&((tsk_ctl)->sema), 0); \
-        init_completion(&((tsk_ctl)->completed)); \
-        (tsk_ctl)->parent = owner; \
-        (tsk_ctl)->proc_name = name;  \
-        (tsk_ctl)->terminated = FALSE; \
-        (tsk_ctl)->p_task  = kthread_run(thread_func, tsk_ctl, (char*)name); \
-        (tsk_ctl)->thr_pid = (tsk_ctl)->p_task->pid; \
-        spin_lock_init(&((tsk_ctl)->spinlock)); \
-}
-
-#define PROC_STOP(tsk_ctl) \
-{ \
-        (tsk_ctl)->terminated = TRUE; \
-        smp_wmb(); \
-        up(&((tsk_ctl)->sema)); \
-        wait_for_completion(&((tsk_ctl)->completed)); \
-        RPU_INFO_HAL("%s(): thread:%s:%lx terminated OK\n", __func__, \
-                         (tsk_ctl)->proc_name, (tsk_ctl)->thr_pid); \
-        (tsk_ctl)->thr_pid = -1; \
-}
-
-#define TXRX_DATA_LOCK
-#define TX_USE_THREAD
+struct rk915_worker {
+	struct task_struct *task;
+	wait_queue_head_t waitq;
+	atomic_t pending;
+};
 
 typedef int (*fw_bring_up_func)(void *priv);
 typedef int (*fw_tear_down_func)(void *priv);
 
 extern enum PROBE_STATUS probe_status;
 struct hal_priv {
-        /* Pointer to the bus device for e.g. PCI dev, Platform dev etc */
-        void *bus_dev;
-	
+	/* Pointer to the bus device for e.g. PCI dev, Platform dev etc */
+	void *bus_dev;
+
+	/* owning device, set at umac allocation */
+	struct wifi_dev *wifi;
+
+	struct notifier_block reboot_nb;
+
 	/* RPU Host RAM mappings*/
 	void __iomem *base_addr_rpu_host_ram;
 	void __iomem *tx_base_addr_rpu_host_ram;
@@ -128,13 +93,7 @@ struct hal_priv {
 
 	/* TX */
 	struct sk_buff_head txq;
-	//struct tasklet_struct tx_tasklet;
-#ifdef TX_USE_THREAD
-	tsk_ctl_t thr_tx_ctl;
-#else
-	struct work_struct tx_work;
-	struct workqueue_struct *tx_wkq;
-#endif
+	struct rk915_worker tx_worker;
 	unsigned short cmd_cnt;
 	struct buf_info *tx_buf_info;
 	struct hal_tx_data *hal_tx_data;
@@ -142,11 +101,9 @@ struct hal_priv {
 
 	/* RX */
 	struct sk_buff_head rxq;
-	//struct tasklet_struct rx_tasklet;
-	//struct tasklet_struct recv_tasklet;
 	struct work_struct rx_work;
 	struct workqueue_struct *rx_wkq;
-	tsk_ctl_t thr_rx_ctl;
+	struct rk915_worker rx_worker;
 	unsigned short event_cnt;
 	msg_handler rcv_handler;
 	struct buf_info *rx_buf_info;
@@ -166,13 +123,9 @@ struct hal_priv {
 	unsigned char *rf_params;
 	struct tasklet_struct rpu_ready_tasklet;
 
-	struct platform_device *plat_dev;
-
 	struct host_io_info *io_info;
 
-#ifdef TXRX_DATA_LOCK
 	struct mutex txrx_mutex;
-#endif
 	fw_bring_up_func fw_bring_up_func;
 	fw_tear_down_func fw_tear_down_func;
 
@@ -184,12 +137,13 @@ struct hal_priv {
 	int fw_error_reason;
 	int lpw_error_counter;
 	int fw_error_cmd_done;
-	struct wake_lock fw_err_lock;
+	struct wakeup_source *fw_err_ws;
 	int during_fw_download;
 	int shutdown;
 
 	int during_pm_resume;
 	struct notifier_block pm_notifier;
+	wait_queue_head_t wait_q;
 };
 
 #define HAL_HOST_ZONE_DMA_LEN (64 * 1024 * 1024)
@@ -219,12 +173,8 @@ struct hal_priv {
 #define HAL_HOST_RPU_LEN 0x0003E800
 #define HAL_RPU_GRAM_BASE 0xB7000000
 
-#ifdef RPU_SLEEP_ENABLE
 /* RPU Sleep Controller registers
  */
-#define SLEEP_CONTROLLER_BASE_ADDR (hpriv->rpu_sysbus_base_addr + 0x02C00)
-#define UCC_SLEEP_CTRL_WAKEUP_TIME (SLEEP_CONTROLLER_BASE_ADDR + 0x14)
-#endif
 
 /* DDR_PHYS_WLN_BASE */
 #define HAL_HOST_RPU_RAM_START 0x02C00000
@@ -253,14 +203,14 @@ struct buf_info {
 	struct sk_buff *skb;
 } __packed;
 
-int _rpu_umac_if_init(struct proc_dir_entry **);
-void _rpu_umac_if_exit(void);
+int _rpu_umac_if_init(struct hal_priv *priv);
+void _rpu_umac_if_exit(struct hal_priv *priv);
 int reset_hal_params(void);
 
 static inline void hal_rpu_read(struct hal_priv *hpriv,
-				    unsigned long base,
-				    unsigned long offset,
-				    unsigned int *data)
+					unsigned long base,
+					unsigned long offset,
+					unsigned int *data)
 {
 	if (base == RPU_SYSBUS_REG)
 		*data = readl((void __iomem *)(hpriv->rpu_sysbus_base_addr + offset));
@@ -271,12 +221,12 @@ static inline void hal_rpu_read(struct hal_priv *hpriv,
 }
 
 static inline void hal_rpu_write(struct hal_priv *hpriv,
-				     unsigned long base,
-				     unsigned long offset,
-				     unsigned int data)
+					unsigned long base,
+					unsigned long offset,
+					unsigned int data)
 {
 	if (base == RPU_SYSBUS_REG)
-		writel(data, (void __iomem *)(hpriv->rpu_sysbus_base_addr+ offset));
+		writel(data, (void __iomem *)(hpriv->rpu_sysbus_base_addr + offset));
 	else if (base == RPU_GRAM_PACKED)
 		writel(data, (void __iomem *)(hpriv->gram_base_addr + offset));
 	else if (base == RPU_GRAM_MSB)
@@ -364,41 +314,26 @@ static inline void hal_rpu_write(struct hal_priv *hpriv,
  * @get_dev: This op is used to return OS specific device structure depending on
  *           the bus type.
  *
- * @trigger_timed_sleep: Trigger the LPW to enter in to Sleep and wakeup
- *			 after a timeout.
- *
- * @trigger_wakeup: Trigger the LPW to wakeup, this will assert/de-assert
- *		    the WAKEUP_NOW signal.
- *
- * @rpu_sleep_status: Query the sleep controller about the state of RPU Sleep.
- *
- * @get_dump_gram: This op is is used to return the starting pointer
+ * @get_dump_gram: This op is used to return the starting pointer
  *		   to GRAM dump.
  *
- * @get_dump_core: This op is is used to return the starting pointer
+ * @get_dump_core: This op is used to return the starting pointer
  *		   to CORE dump.
  *
- * @get_dump_perip: This op is is used to return the starting pointer
+ * @get_dump_perip: This op is used to return the starting pointer
  *		    to PERIP dump.
  *
- * @get_dump_sysbus: This op is is used to return the starting pointer
+ * @get_dump_sysbus: This op is used to return the starting pointer
  *		     to SYSBUS dump.
  *
- * @get_dump_len: This op is is used to return the length of the dump
- * 		  for a give region.
+ * @get_dump_len: This op is used to return the length of the dump
+ *		  for a give region.
  *
- * @rpu_set_mem: This op is is used to set the memory of RPU.
  *
- * @rpu_read_mem: This op is is used to to read from the RPU memory
- *		  to local memory.
  *
- * @rpu_write_mem: This op is is used to write from the local memory
- *		   to RPU memory.
  *
- * @mtx_start_thread: This op is is used to start the MTX threads
- *		      (Applicable only for META)
  *
- * @mtx_stop_thread: This op is is used to stop the MTX threads.
+ * @mtx_stop_thread: This op is used to stop the MTX threads.
  *		      (Applicable only for META)
  *
  * These APIs allow the upper parts of the Host driver to control the HAL.
@@ -406,53 +341,27 @@ static inline void hal_rpu_write(struct hal_priv *hpriv,
  * the description.
  */
 struct hal_ops_tag {
-	int (*init)(void *dev);
-	int (*deinit)(void *dev);
-	int (*start)(void);
-	int (*stop)(void);
-	void (*register_callback)(msg_handler);
-	void (*send)(void* msg, void* payload, unsigned int descriptor_id);
-	int (*init_bufs)(unsigned int tx_bufs,
+	int (*init)(struct hal_priv *priv);
+	int (*deinit)(struct hal_priv *priv);
+	int (*start)(struct hal_priv *priv);
+	int (*stop)(struct hal_priv *priv);
+	void (*register_callback)(struct hal_priv *priv, msg_handler handler);
+	void (*send)(struct hal_priv *priv, void *msg, void *payload,
+		     unsigned int descriptor_id);
+	int (*init_bufs)(struct hal_priv *priv,
+			 unsigned int tx_bufs,
 			 unsigned int rx_bufs_2k,
 			 unsigned int rx_bufs_12k,
 			 unsigned int tx_max_data_size);
-	void (*deinit_bufs)(void);
-	int (*map_tx_buf)(int pkt_desc,
-			  int frame_id,
-			  unsigned char * data,
-			  int len,
-			  dma_addr_t *dma_addr);
-	int (*unmap_tx_buf)(int pkt_desc, int frame_id);
-	int (*reset_hal_params)(void);
+	void (*deinit_bufs)(struct hal_priv *priv);
+	int (*unmap_tx_buf)(struct hal_priv *priv, int pkt_desc, int frame_id);
+	int (*reset_hal_params)(struct hal_priv *priv);
 #ifdef CONFIG_PM
-	void (*enable_irq_wake)(void);
-	void (*disable_irq_wake)(void);
+	void (*enable_irq_wake)(struct hal_priv *priv);
+	void (*disable_irq_wake)(struct hal_priv *priv);
 #endif
-	struct device * (*get_dev)(void);
-#ifdef RPU_SLEEP_ENABLE
-	void (*trigger_timed_sleep)(int val);
-	void (*trigger_wakeup)(enum RPU_SLEEP_TYPE);
-	bool (*rpu_sleep_status)(void);
-#endif
-	int (*rpu_set_mem)(unsigned int *dst,
-			     unsigned int val,
-			     unsigned int len);
-	int (*rpu_read_mem)(unsigned int *src,
-			     unsigned int *dst,
-			     unsigned int len);
-	int (*rpu_write_mem)(unsigned int *src,
-			     unsigned int *dst,
-			     unsigned int len);
-	void (*mtx_start_thread)(unsigned int thrd_num,
-				 unsigned int stack_ptr,
-				 unsigned int prog_ctr,
-				 unsigned int catch_state_addr);
-	void (*mtx_stop_thread)(unsigned int thrd_num);
+	struct device * (*get_dev)(struct hal_priv *priv);
 
-        void (*set_mem_region)(unsigned int);
-        void (*request_mem_regions)(unsigned char **,
-                                    unsigned char **,
-                                    unsigned char **);
 
 };
 

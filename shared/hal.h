@@ -1,18 +1,13 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Copyright (c) 2021, Fuzhou Rockchip Electronics Co., Ltd
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #ifndef _HAL_H_
 #define _HAL_H_
 
-//#define TX_SG_MODE
 
-#define __IMG_PKD  __attribute__((packed))
+#define __IMG_PKD  __packed
 
 #define HAL_INT_CMD_MAX_RX 16
 #define HAL_INT_EVENT_MAX_RX 16
@@ -35,13 +30,9 @@
 /* Command, Event, Tx Data and Buff mappping offsets */
 #define HAL_COMMAND_OFFSET (0)
 #define HAL_GRAM_CMD_START HAL_COMMAND_OFFSET
-#define HAL_GRAM_CMD_STATUS HAL_COMMAND_OFFSET + MSG_STATUS_OFFSET
-#define HAL_GRAM_CMD_LEN HAL_GRAM_CMD_START + MSG_LEN_OFFSET
 
 #define HAL_EVENT_OFFSET (HAL_COMMAND_OFFSET + HAL_SHARED_MEM_MAX_MSG_SIZE)
 #define HAL_GRAM_EVENT_START HAL_EVENT_OFFSET
-#define HAL_GRAM_EVENT_STATUS HAL_EVENT_OFFSET + MSG_STATUS_OFFSET
-#define HAL_GRAM_EVENT_LEN HAL_EVENT_OFFSET + MSG_LEN_OFFSET
 
 
 
