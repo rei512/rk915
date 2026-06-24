@@ -1,96 +1,48 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2021, Fuzhou Rockchip Electronics Co., Ltd
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
-#include <linux/proc_fs.h>
+#include <linux/debugfs.h>
 #include "core.h"
 #include "hal_common.h"
 #include "hal_io.h"
+#include "if_io.h"
 #include "utils.h"
 
 static int print_version = 1;
 
-int _rpu_umac_if_init(struct proc_dir_entry **main_dir_entry)
+int _rpu_umac_if_init(struct hal_priv *priv)
 {
+	struct wifi_dev *wdev;
 	int error;
 
-	error = proc_init(&main_dir_entry);
-	if (error)
+	wdev = proc_init(priv);
+	if (!wdev)
+		return -ENOMEM;
+
+	error = rpu_init(wdev);
+	if (error) {
+		proc_exit(wdev);
 		return error;
+	}
 
-	error = rpu_init();
+	rk915_debugfs_init(wdev);
 
-	return error;
+	return 0;
 }
 
-void _rpu_umac_if_exit(void)
+void _rpu_umac_if_exit(struct hal_priv *priv)
 {
-	rpu_exit();
+	rpu_exit(priv->wifi);
 }
 
-#if 0
-static void prog_sleep_controller_default(void)
-{
-#define PWR_ON_VALUES_SIZE 2 * sizeof(unsigned int)
-#define PWR_OFF_VALUES_SIZE 2 * sizeof(unsigned int)
-#define RAM_ON_STATES_SIZE 2 * sizeof(unsigned int)
-#define RAM_OFF_STATES_SIZE 2 * sizeof(unsigned int)
-#define PWR_ON_TIMES_SIZE 14 * sizeof(unsigned int)
-#define PWR_OFF_TIMES_SIZE 14 * sizeof(unsigned int)
-#define RAM_ON_TIMES_SIZE 4 * sizeof(unsigned int)
-#define RAM_OFF_TIMES_SIZE 4 * sizeof(unsigned int)
-
-	/* There are the LMAC defaults, change this to customize sleep 
-	 * controller configuration as per SoC.
-	 */
-	unsigned int pwr_on_values[PWR_ON_VALUES_SIZE] = {0x65FE, 0x5};
-	unsigned int pwr_off_values[PWR_OFF_VALUES_SIZE] = {0x9A01, 0x2};
-	unsigned int ram_on_states[RAM_ON_STATES_SIZE] = {0x0, 0x0};
-	unsigned int ram_off_states[RAM_OFF_STATES_SIZE] = {0x3D, 0x0};
-	unsigned int pwr_on_times[PWR_ON_TIMES_SIZE] = {3, 1, 4, 4, 64, 73, 64, 73, 69, 74, 75, 73, 73,0};
-	unsigned int pwr_off_times[PWR_OFF_TIMES_SIZE] = {12, 14, 11, 13, 2, 1, 2, 0, 10, 5, 4, 6, 6, 15};
-	unsigned int ram_on_times[RAM_ON_TIMES_SIZE] = {71, 0, 0, 0};
-	unsigned int ram_off_times[RAM_OFF_TIMES_SIZE] = {5, 0, 0, 0};
-	unsigned int sleep_freq = 32768 ;
-
-	rpu_prog_pwrmgmt_pwr_on_value(pwr_on_values, PWR_ON_VALUES_SIZE);
-	rpu_prog_pwrmgmt_pwr_off_value(pwr_off_values, PWR_OFF_VALUES_SIZE);
-	rpu_prog_pwrmgmt_ram_on_state(ram_on_states, RAM_ON_STATES_SIZE);
-	rpu_prog_pwrmgmt_ram_off_state(ram_off_states, RAM_OFF_STATES_SIZE);
-	rpu_prog_pwrmgmt_pwr_on_time(pwr_on_times, PWR_ON_TIMES_SIZE);
-	rpu_prog_pwrmgmt_pwr_off_time(pwr_off_times, PWR_OFF_TIMES_SIZE) ;
-	rpu_prog_pwrmgmt_ram_on_time(ram_on_times, RAM_ON_TIMES_SIZE);
-	rpu_prog_pwrmgmt_ram_off_time(ram_off_times, RAM_OFF_TIMES_SIZE) ;
-	rpu_prog_pwrmgmt_sleep_freq(sleep_freq);
-
-	//rpu_prog_pwrmgmt_clk_adj(-10000);
-	//rpu_prog_pwrmgmt_wakeup_time(5000);
-}
-#endif
-
-#ifdef RK915
 static int rpu_lmac_feature_init(void)
 {
-#if 0
-	unsigned int feature_val = 0;
-
-	//feature_val |= LMAC_WATCHDOG_PHY_HANG_RESET_ENABLE;
-	//feature_val |= LMAC_FILTER_PROBE_REQ_IN_PS_ENABLE;
-	feature_val |= LMAC_FILTER_BCMC_DATA_IN_PS_ENABLE;
-	feature_val |= LMAC_NULL_FRAME_IN_PS_ENABLE;
-	return rpu_prog_patch_feature(feature_val);
-#else
 	return 0;
-#endif
 }
-#endif
 
-int rpu_core_init(struct img_priv *priv, unsigned int ftm)
+int rpu_core_init(struct img_priv *priv)
 {
 	int ret = 0;
 	unsigned int reset_type = LMAC_ENABLE;
@@ -98,68 +50,62 @@ int rpu_core_init(struct img_priv *priv, unsigned int ftm)
 	if (priv->state == STARTED)
 		return ret;
 
-	RPU_DEBUG_MAIN("%s-UMAC: Init called\n", priv->name);
+	rk915_dbg(RK915_DBG_MAIN, "%s-UMAC: Init called\n", priv->name);
 	spin_lock_init(&tsf_lock);
 	rpu_if_init(priv, priv->name);
 
 	/* Enable the LMAC, set defaults and initialize TX */
 	priv->reset_complete = 0;
 
-#ifdef RPU_SLEEP_ENABLE
 	reset_type |= priv->params->rpu_sleep_type;
-#endif
 
-	RPU_INFO_MAIN("%s-UMAC: Reset (ENABLE) reset_type %x\n", priv->name, reset_type);
+	rk915_dbg(RK915_DBG_MAIN, "%s-UMAC: Reset (ENABLE) reset_type %x\n", priv->name, reset_type);
 
-	if (hal_ops.init_bufs(NUM_TX_DESCS,
-			      NUM_RX_BUFS_2K,
-			      NUM_RX_BUFS_12K,
-			      priv->params->max_data_size) < 0) {
+	if (hal_ops.init_bufs(priv->hal, NUM_TX_DESCS,
+				NUM_RX_BUFS_2K,
+				NUM_RX_BUFS_12K,
+				priv->params->max_data_size) < 0) {
 		ret = -1;
-		RPU_ERROR_MAIN("%s: init_bufs failed\n", __func__);
+		rk915_err("%s: init_bufs failed\n", __func__);
 		goto hal_stop;
 	}
 
-	if (hal_ops.start()) {
+	if (hal_ops.start(priv->hal)) {
 		ret = -1;
-		RPU_ERROR_MAIN("%s: hal_ops.start failed\n", __func__);
+		rk915_err("%s: hal_ops.start failed\n", __func__);
 		goto rpu_if_deinit;
 	}
 
-#ifndef SDIO_TXRX_STABILITY_TEST
 	/* notify fw wakeup */
-	rk915_notify_pm(hpriv, 1);
+	rk915_notify_pm(priv->hal, 1);
 
-	if (ftm)
-		CALL_RPU(rpu_prog_reset,
-			  reset_type,
-			  LMAC_MODE_FTM);
-	else
-		CALL_RPU(rpu_prog_reset,
-			  reset_type,
-			  LMAC_MODE_NORMAL);
+		ret = rpu_prog_reset(reset_type, LMAC_MODE_NORMAL);
+		if (ret != 0)
+			goto prog_rpu_fail;
 
 	if (wait_for_reset_complete(priv, 1) < 0) {
 		ret = -1;
-		RPU_ERROR_MAIN("%s: wait_for_reset_complete failed\n", __func__);
+		rk915_err("%s: wait_for_reset_complete failed\n", __func__);
 		goto hal_deinit_bufs;
 	}
-#endif
 
-	CALL_RPU(rpu_fw_priv_cmd, FW_PRIV_INIT, NULL);
+	ret = rpu_fw_priv_cmd(FW_PRIV_INIT, NULL);
+	if (ret != 0)
+		goto prog_rpu_fail;
 
-#ifdef SDIO_TXRX_STABILITY_TEST
-	priv->state = STARTED;
-	CALL_RPU(rpu_prog_txrx_test, TXRX_TEST_START_TX);
-#endif
+	if (rk915_patch_features) {
+		ret = rpu_prog_patch_feature(rk915_patch_features);
+		if (ret != 0)
+			goto prog_rpu_fail;
+	}
 
-#ifdef RK915
 	rpu_lmac_feature_init();
-#endif
 
 	//prog_sleep_controller_default();
 
-	CALL_RPU(rpu_prog_txpower, priv->txpower);
+	ret = rpu_prog_txpower(priv->txpower);
+	if (ret != 0)
+		goto prog_rpu_fail;
 
 	rpu_tx_init(priv);
 
@@ -169,60 +115,68 @@ int rpu_core_init(struct img_priv *priv, unsigned int ftm)
 
 	return 0;
 hal_deinit_bufs:
-	hal_ops.deinit_bufs();
+	hal_ops.deinit_bufs(priv->hal);
 prog_rpu_fail:
 hal_stop:
-	hal_ops.stop();
+	hal_ops.stop(priv->hal);
 rpu_if_deinit:
 	rpu_if_deinit();
 	return ret;
 }
 
 
-void rpu_core_deinit(struct img_priv *priv, unsigned int ftm)
+void rpu_core_deinit(struct img_priv *priv)
 {
 	int ret = 0;
 
-	RPU_DEBUG_MAIN("%s-UMAC: De-init called\n", priv->name);
+	rk915_dbg(RK915_DBG_MAIN, "%s-UMAC: De-init called\n", priv->name);
 
 #ifdef ENABLE_DAPT
 	dapt_param_deinit(priv);
-#endif	
+#endif
 
 	/* De initialize tx  and disable LMAC*/
 	rpu_tx_deinit(priv);
 
-	if (!hpriv->fw_error) {
+	if (!priv->hal->fw_error) {
 		/* Disable the LMAC */
 		priv->reset_complete = 0;
-		RPU_INFO_MAIN("%s-UMAC: Reset (DISABLE)\n", priv->name);
+		rk915_dbg(RK915_DBG_MAIN, "%s-UMAC: Reset (DISABLE)\n", priv->name);
 
-		if (ftm)
-			CALL_RPU(rpu_prog_reset,
-				  LMAC_DISABLE,
-				  LMAC_MODE_FTM);
-		else
-			CALL_RPU(rpu_prog_reset,
-				  LMAC_DISABLE,
-				  LMAC_MODE_NORMAL);
+		/* Make sure the chip is awake before it is asked to stop:
+		 * the enable path pokes it the same way.
+		 */
+		rk915_notify_pm(priv->hal, 1);
+
+			ret = rpu_prog_reset(LMAC_DISABLE, LMAC_MODE_NORMAL);
+			if (ret != 0)
+				goto prog_rpu_fail;
 
 		if (wait_for_reset_complete(priv, 0) < 0) {
 			ret = -1;
-			RPU_ERROR_MAIN("%s: wait_for_reset_complete failed\n", __func__);
+			rk915_err("%s: wait_for_reset_complete failed\n", __func__);
 			goto prog_rpu_fail;
 		}
 
+		/* The firmware halts once disabled and no longer serves the
+		 * bus; quiesce all traffic until the next bring-up (which
+		 * clears this again), and let the bus clock gate while
+		 * wifi is off.
+		 */
+		block_rpu_comm = true;
+		rk915_sdio_clock_release(priv->hal->io_info);
+
 		/* notify fw sleep */
-		rk915_notify_pm(hpriv, 0);
+		rk915_notify_pm(priv->hal, 0);
 	}
 
 prog_rpu_fail:
 	wait_for_fw_error_process_complete(priv);
 
-	rpu_if_free_outstnding();
+	rpu_if_free_outstnding(priv->hal);
 
-	hal_ops.stop();
-	hal_ops.deinit_bufs();
+	hal_ops.stop(priv->hal);
+	hal_ops.deinit_bufs(priv->hal);
 
 	rpu_if_deinit();
 
@@ -237,11 +191,12 @@ void rpu_reset_complete(char *lmac_version, void *context)
 	memcpy(priv->stats->rpu_lmac_version, lmac_version, 5);
 	priv->stats->rpu_lmac_version[5] = '\0';
 	priv->reset_complete = 1;
+	rk915_wake_waiters(priv->hal);
 	if (print_version) {
 		print_version = 0;
 		memcpy(priv->stats->fw_version, lmac_version+6, 20);
 		priv->stats->fw_version[20] = '\0';
-		RPU_INFO_MAIN("%s: Patch: %s FW: %s\n", __func__,
+		rk915_info("firmware patch %s, build %s\n",
 						priv->stats->rpu_lmac_version, priv->stats->fw_version);
 	}
 }
@@ -263,7 +218,7 @@ void rpu_fw_priv_cmd_done(struct fw_priv_cmd_done *event,
 	struct img_priv *priv = (struct img_priv *)context;
 
 	if (priv->fw_info->offset+event->info.size >= priv->fw_info->len) {
-		RPU_ERROR_MAIN("%s: fw_info buf overflow\n", __func__);
+		rk915_err("%s: fw_info buf overflow\n", __func__);
 		return;
 	}
 
@@ -276,9 +231,8 @@ void rpu_fw_priv_cmd_done(struct fw_priv_cmd_done *event,
 		priv->fw_info->finish = 1;
 	}
 
-	if (event->hdr.descriptor_id == DUMP_FW_CRASH_INFO) {
-		RPU_ERROR_MAIN("\n%s\n", priv->fw_info->info);
-	}
+	if (event->hdr.descriptor_id == DUMP_FW_CRASH_INFO)
+		rk915_err("\n%s\n", priv->fw_info->info);
 }
 
 void rpu_mac_stats(struct umac_event_mac_stats *mac_stats,
@@ -331,30 +285,10 @@ void rpu_mac_stats(struct umac_event_mac_stats *mac_stats,
 	priv->stats->csync_abort_agctrig_cntr = mac_stats->csync_abort_agctrig_cntr;
 	priv->stats->crc_success_cnt = mac_stats->crc_success_cnt;
 	priv->stats->crc_fail_cnt = mac_stats->crc_fail_cnt;
-#ifdef RPU_SLEEP_ENABLE
 	priv->stats->rpu_boot_cnt = mac_stats->rpu_boot_cnt;
 	memcpy(priv->stats->sleep_stats, mac_stats->sleep_stats,
 		sizeof(priv->stats->sleep_stats));
-#endif
 }
-void rpu_rf_calib_data(struct umac_event_rf_calib_data *rf_data,
-			       void *context)
-{
-	struct img_priv  *priv = (struct img_priv *)context;
-
-	if (rf_data->rf_calib_data_length > MAX_RF_CALIB_DATA) {
-		RPU_ERROR_MAIN("%s: RF calib data exceeded the max size: %d\n",
-			    __func__,
-			    MAX_RF_CALIB_DATA);
-		return;
-	}
-	priv->stats->rf_calib_data_length = rf_data->rf_calib_data_length;
-	memset(priv->stats->rf_calib_data, 0x00,
-	       MAX_RF_CALIB_DATA);
-	memcpy(priv->stats->rf_calib_data, rf_data->rf_calib_data,
-	       rf_data->rf_calib_data_length);
-}
-
 
 
 void rpu_ch_prog_complete(int event,
@@ -364,34 +298,34 @@ void rpu_ch_prog_complete(int event,
 	struct img_priv *priv = (struct img_priv *)context;
 
 	priv->chan_prog_done = 1;
+	rk915_wake_waiters(priv->hal);
 }
 
-int rk915_wait_fw_ready_to_sleep(void)
+int rk915_wait_fw_ready_to_sleep(struct hal_priv *hal)
 {
-    struct img_priv *imgpriv =
-            wifi ? wifi->hw->priv : NULL;
+	struct img_priv *imgpriv =
+		(hal->wifi && hal->wifi->hw) ? hal->wifi->hw->priv : NULL;
 
-    if (imgpriv) {
-        imgpriv->read_csr_complete = 0;
-        imgpriv->read_csr_value = 0;
-        rpu_prog_read_csr(0xbf2);
-        wait_for_read_csr_cmp(imgpriv);
-        //RPU_INFO_MAIN("read_csr_value = %x\n", imgpriv->read_csr_value);
+	/* a disabled firmware no longer answers: treat as ready */
+	if (block_rpu_comm)
+		return 1;
 
-        if (imgpriv->read_csr_value & (1<<14)) {
-            imgpriv->read_csr_complete = 0;
-            imgpriv->read_csr_value = 0;
-            rpu_prog_read_csr(0xbf2);
-            wait_for_read_csr_cmp(imgpriv);
-            //RPU_INFO_MAIN("read_csr_value = %x\n", imgpriv->read_csr_value);
-        }
+	if (imgpriv) {
+		imgpriv->read_csr_complete = 0;
+		imgpriv->read_csr_value = 0;
+		rpu_prog_read_csr(0xbf2);
+		wait_for_read_csr_cmp(imgpriv);
 
-        if (imgpriv->read_csr_value & (1<<15)) {
-            return 1;
-        }
-        return 0;
-    }
+		if (imgpriv->read_csr_value & (1 << 14)) {
+			imgpriv->read_csr_complete = 0;
+			imgpriv->read_csr_value = 0;
+			rpu_prog_read_csr(0xbf2);
+			wait_for_read_csr_cmp(imgpriv);
+		}
 
-    return 0;
+		return !!(imgpriv->read_csr_value & (1 << 15));
+	}
+
+	return 0;
 }
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/module.h>
 #include <net/mac80211.h>
 #include <linux/time.h>
@@ -12,7 +13,8 @@
 #include <linux/sched.h>
 #include <linux/kthread.h>
 #include <linux/workqueue.h>
-#include <linux/platform_device.h>
+#include <linux/reboot.h>
+#include "hal_common.h"
 #include <linux/suspend.h>
 #include <linux/of.h>
 #include <linux/io.h>
@@ -21,44 +23,71 @@
 
 #include "core.h"
 #include "if_io.h"
-#include "soc.h"
 #include "hal.h"
 #include "utils.h"
 #include "platform.h"
 #include "hal_io.h"
 
-struct hal_priv *hpriv;
-bool m0_jtag_enable = false;
+bool m0_jtag_enable;
 
 static int fw_bring_up(void *p)
 {
 	struct hal_priv *priv = (struct hal_priv *)p;
+	struct sk_buff *skb;
 
-	if (hpriv->fw_error_processing) {
-		rk915_poweron();
-		mdelay(RK915_POWER_ON_DELAY_MS);
-		rk915_platform_bus_rec_init(priv->io_info);
-		mdelay(RK915_POWER_ON_DELAY_MS);
-	} else {
-		if (rk915_platform_bus_init(priv->io_info)) {
-			RPU_ERROR_MAIN("%s: platform_bus_init failed\n", __func__);
+	if (priv->fw_error_processing) {
+		if (rk915_sdio_power_cycle(priv->io_info)) {
+			rk915_err("%s: power cycle failed\n", __func__);
 			return -1;
 		}
+	} else {
+		if (rk915_platform_bus_init(priv->io_info)) {
+			rk915_err("%s: platform_bus_init failed\n", __func__);
+			return -1;
+		}
+
+		/* Firmware can only be loaded into fresh ROM: power-cycle
+		 * in case the chip is already running an image.
+		 */
+		if (rk915_sdio_power_cycle(priv->io_info)) {
+			rk915_err("%s: power cycle failed\n", __func__);
+			return -1;
+		}
+
+		/* The chip is fresh: drop state left over from the
+		 * previous session, otherwise the tx path stays gated
+		 * and no command ever reaches the firmware.
+		 */
+		rk915_irq_enable(priv, 1);
+		if (block_rpu_comm) {
+			rk915_dbg(RK915_DBG_MAIN, "%s: clearing stale block_rpu_comm\n",
+					__func__);
+			block_rpu_comm = false;
+		}
+		if (priv->fw_error || priv->fw_error_processing) {
+			rk915_dbg(RK915_DBG_MAIN, "%s: clearing stale fw error state\n",
+					__func__);
+			priv->fw_error = 0;
+			priv->fw_error_processing = 0;
+			rk915_wake_waiters(priv);
+		}
+		while ((skb = skb_dequeue(&priv->txq)))
+			dev_kfree_skb_any(skb);
 	}
 
 	if (rk915_download_firmware(priv)) {
-		RPU_ERROR_MAIN("%s: rk915_download_firmware failed\n", __func__);
+		rk915_err("%s: rk915_download_firmware failed\n", __func__);
 		return -1;
 	}
 
 	if (rk915_io_init(priv)) {
-		RPU_ERROR_MAIN("%s: rk915_io_init failed\n", __func__);
+		rk915_err("%s: rk915_io_init failed\n", __func__);
 		return -1;
 	}
 
-	if (!down_fw_in_probe && !hpriv->fw_error_processing) {
+	if (!down_fw_in_probe && !priv->fw_error_processing) {
 		if (rk915_register_irq(priv->io_info)) {
-			RPU_ERROR_MAIN("%s: rk915_irq_register failed\n", __func__);
+			rk915_err("%s: rk915_irq_register failed\n", __func__);
 			return -1;
 		}
 	}
@@ -68,219 +97,154 @@ static int fw_bring_up(void *p)
 
 static int fw_tear_down(void *p)
 {
-	if (hpriv->fw_error_processing) {
-		rk915_poweroff();
-		return 0;
-	}
-
-	rk915_platform_bus_deinit(hpriv->io_info);
-
+	/* The SDIO bus is owned by probe/remove and the chip is
+	 * power-cycled by the next bring-up, so there is nothing to
+	 * undo here.
+	 */
 	return 0;
 }
 
-static void rk915_core_deinit(void)
+static int rk915_reboot_notify(struct notifier_block *nb,
+				unsigned long action, void *data)
+{
+	struct hal_priv *priv = container_of(nb, struct hal_priv, reboot_nb);
+
+	priv->shutdown = 1;
+
+	return NOTIFY_DONE;
+}
+
+void rk915_core_deinit(struct hal_priv *priv)
 {
 	struct host_io_info *host;
 
-	if (!hpriv)
+	if (!priv)
 		return;
 
-	host = hpriv->io_info;
+	unregister_reboot_notifier(&priv->reboot_nb);
+
+	host = priv->io_info;
 	if (host)
 		rk915_free_firmware_buf(&host->firmware);
 	if (host && host->rx_serias_buf)
 		kfree(host->rx_serias_buf);
-	if (hpriv)
-		kfree(hpriv);
-	if (host)
-		kfree(host);
+	kfree(priv);
+	kfree(host);
 }
 
-static int rk915_core_init(void)
+struct hal_priv *rk915_core_init(void)
 {
 	struct host_io_info *host = NULL;
 	struct hal_priv *priv = NULL;
 
-	RPU_INFO_MAIN("%s.\n", __func__);
 
-	host = kzalloc(sizeof(struct host_io_info), GFP_KERNEL);
-	if (!host) {
-		RPU_ERROR_MAIN("%s: kalloc hal_priv failed\n", __func__);
+	host = kzalloc_obj(struct host_io_info, GFP_KERNEL);
+	if (!host)
 		goto err;
-	}
 
 	host->rx_serias_buf = kzalloc(MAX_RX_SERIAS_BYTES, GFP_KERNEL);
-	if (!host->rx_serias_buf) {
-		RPU_ERROR_MAIN("%s: kalloc hal_priv failed\n", __func__);
+	if (!host->rx_serias_buf)
 		goto err;
-	}
 
 	host->rx_serias_idx = -1;
 	host->rx_serias_count = 0;
 	host->rx_next_len = 0;
 	host->bus_init = false;
 
-	if (rk915_alloc_firmware_buf(&host->firmware) != 0) {
-		RPU_ERROR_MAIN("%s: rk915_alloc_firmware_buf failed\n", __func__);
+	if (rk915_alloc_firmware_buf(&host->firmware) != 0)
 		goto err;
-	}
 
-	priv = kzalloc(sizeof(struct hal_priv), GFP_KERNEL);
-	if (!priv) {
-		RPU_ERROR_MAIN("%s: kalloc hal_priv failed\n", __func__);
+	priv = kzalloc_obj(struct hal_priv, GFP_KERNEL);
+	if (!priv)
 		goto err;
-	}
 
-	hpriv = priv;
 	priv->io_info = host;
+	host->hal = priv;
+	init_waitqueue_head(&priv->wait_q);
 
-	rk915_sdio_pre_init();
+	priv->reboot_nb.notifier_call = rk915_reboot_notify;
+	register_reboot_notifier(&priv->reboot_nb);
 
-	return 0;
+	return priv;
 
 err:
-	rk915_core_deinit();
+	if (host) {
+		rk915_free_firmware_buf(&host->firmware);
+		kfree(host->rx_serias_buf);
+	}
+	kfree(host);
 
-	return -1;
+	return NULL;
 }
 
-int rk915_probe(struct platform_device *pdev)
+int rk915_device_probe(struct hal_priv *priv)
 {
 	int ret;
-	struct host_io_info *host = hpriv->io_info;
 
-	RPU_INFO_MAIN("%s\n", __func__);
-
-	hpriv->fw_bring_up_func = fw_bring_up;
-	hpriv->fw_tear_down_func = fw_tear_down;
+	priv->fw_bring_up_func = fw_bring_up;
+	priv->fw_tear_down_func = fw_tear_down;
 
 	/* Initialize the rest of the layer */
-	ret = hal_ops.init(host->dev);
+	ret = hal_ops.init(priv);
 	if (ret < 0) {
-		RPU_ERROR_MAIN("%s: hal_ops.init failed\n", __func__);
+		rk915_err("%s: hal_ops.init failed\n", __func__);
 		return -1;
 	}
 
 	if (down_fw_in_probe) {
-		if (fw_bring_up(hpriv)) {
-			RPU_ERROR_MAIN("%s: fw_bring_up failed\n", __func__);
-			return -1;
+		if (fw_bring_up(priv)) {
+			rk915_err("%s: fw_bring_up failed\n", __func__);
+			goto err_deinit;
 		}
 
-		if (rk915_register_irq(hpriv->io_info)) {
-			RPU_ERROR_MAIN("%s: rk915_irq_register failed\n", __func__);
-			return -1;
+		if (rk915_register_irq(priv->io_info)) {
+			rk915_err("%s: rk915_irq_register failed\n", __func__);
+			goto err_deinit;
 		}
 	}
 
 	return 0;
+
+err_deinit:
+	priv->shutdown = 1;
+	hal_ops.deinit(priv);
+	return -1;
 }
 
-void rk915_remove(struct platform_device *pdev)
+void rk915_device_remove(struct hal_priv *priv)
 {
-	RPU_INFO_MAIN("%s\n", __func__);
 
-	hal_ops.deinit(NULL);
+	/* stop fw recovery before teardown: it power-cycles the card */
+	priv->shutdown = 1;
 
-	rk915_free_irq(hpriv->io_info);
+	hal_ops.deinit(priv);
+
+	rk915_free_irq(priv->io_info);
+
+	rk915_platform_bus_deinit(priv->io_info);
 }
-
-void rk915_shutdown(struct platform_device *pdev)
-{
-	//RPU_INFO_MAIN("%s\n", __func__);
-	hpriv->shutdown = 1;
-}
-
-static const struct platform_device_id rk915_id_table[] = {
-    {
-        .name = "rk915",
-        .driver_data = 0x00,
-    },
-    {},
-};
-MODULE_DEVICE_TABLE(platform, rk915_id_table);
-
-static struct platform_driver rk915_driver =
-{
-    .probe = rk915_probe,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0)
-    .remove = __devexit_p(rk915_remove),
-#else
-    .remove = rk915_remove,
-#endif
-    .shutdown = rk915_shutdown,
-    .id_table = rk915_id_table,
-    .driver = {
-        .name = "rk915-wifi",
-        .owner = THIS_MODULE,
-    }
-};
 
 static int __init rk915_init(void)
 {
 	int ret;
 
-	RPU_INFO_MAIN("=======================================================\n");
-	RPU_INFO_MAIN("==== Launching Wi-Fi driver! (Powered by Rockchip) ====\n");
-	RPU_INFO_MAIN("=======================================================\n");
-	RPU_INFO_MAIN("RK915 WiFi Ver: %s\n", VERSION_INFO);
-	RPU_INFO_MAIN("Build time: %s %s\n", __DATE__, __TIME__);
-
-	ret = rk915_core_init();
-	if (ret) {
-		RPU_ERROR_MAIN("%s: rk915_core_init failed\n", __func__);
-		goto error;
-	}
+	rk915_info("driver version %s\n", VERSION_INFO);
 
 	ret = rk915_bus_register_driver();
-	if (ret) {
-		RPU_ERROR_MAIN("%s: rk915_bus_register_driver failed\n", __func__);
-		goto error;
-	}
 
-	ret = platform_driver_register(&rk915_driver);
-	if (ret) {
-		RPU_ERROR_MAIN("%s: rk915_platform_driver_register failed\n", __func__);
-		goto error1;
-	}
-
-	ret = rk915_platform_bus_init(hpriv->io_info);
-	if (ret) {
-		RPU_ERROR_MAIN("%s: platform_bus_init failed\n", __func__);
-		goto error2;
-	}
-
-	return ret;
-error2:
-	platform_driver_unregister(&rk915_driver);
-error1:
-	rk915_bus_unregister_driver();
-error:
 	return ret;
 }
 
 static void __exit rk915_exit(void)
 {
-	RPU_INFO_MAIN("==========================================================\n");
-	RPU_INFO_MAIN("==== Dislaunching Wi-Fi driver! (Powered by Rockchip) ====\n");
-	RPU_INFO_MAIN("==========================================================\n");
-
-	platform_driver_unregister(&rk915_driver);
-
 	rk915_bus_unregister_driver();
-
-	rk915_platform_bus_deinit(hpriv->io_info);
-
-	rk915_core_deinit();
 }
 
 module_init(rk915_init);
 module_exit(rk915_exit);
 
-module_param_named(jtag, m0_jtag_enable, bool, 0644);
 MODULE_AUTHOR("Rockchips");
 MODULE_DESCRIPTION("Driver for Rockchips RK915 SDIO WiFi Devices");
 MODULE_LICENSE("GPL");
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
-MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
-#endif
+MODULE_FIRMWARE(RK915_FW_FILE);
+MODULE_FIRMWARE(RK915_PATCH_FILE);
