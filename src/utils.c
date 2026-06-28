@@ -1,20 +1,21 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2021, Fuzhou Rockchip Electronics Co., Ltd
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include "core.h"
 #include "if_io.h"
+#include "utils.h"
 
-int wait_for_fw_error_cmd_done(struct img_priv *priv);
+void rk915_wake_waiters(struct hal_priv *hal)
+{
+	if (hal)
+		wake_up_all(&hal->wait_q);
+}
 
 int conv_str_to_byte(unsigned char *byte,
-		     unsigned char *str,
-		     int len)
+			unsigned char *str,
+			int len)
 {
 	int  i, j = 0;
 	unsigned char ch, val = 0;
@@ -47,368 +48,190 @@ int conv_str_to_byte(unsigned char *byte,
 
 int wait_for_scan_abort(struct img_priv *priv)
 {
-	int count;
-
-	count = 0;
-
-check_scan_abort_complete:
-	if (!hpriv->fw_error && !priv->scan_abort_done && (count < SCAN_ABORT_TIMEOUT_TICKS)) {
-		set_current_state(TASK_INTERRUPTIBLE);
-
-		if (schedule_timeout(1) == 0)
-			count++;
-
-		goto check_scan_abort_complete;
-	}
+	wait_event_timeout(priv->hal->wait_q,
+			   priv->hal->fw_error || priv->scan_abort_done,
+			   SCAN_ABORT_TIMEOUT_TICKS);
 
 	if (!priv->scan_abort_done) {
-		RPU_ERROR_SCAN("%s-UMAC: No SCAN_ABORT_DONE after %ld ticks\n",
+		rk915_err("%s-UMAC: No SCAN_ABORT_DONE after %ld ticks\n",
 			   priv->name, SCAN_ABORT_TIMEOUT_TICKS);
 		return 0;
 	}
 
-	RPU_INFO_SCAN("%s-UMAC: Scan abort complete after %d timer ticks\n",
-					priv->name,
-					count);
+	rk915_dbg(RK915_DBG_SCAN, "%s-UMAC: Scan abort complete\n", priv->name);
 
 	return 0;
-
 }
 
 int wait_for_scan_complete(struct img_priv *priv)
 {
-        int count;
+	wait_event_timeout(priv->hal->wait_q,
+			   priv->hal->fw_error ||
+			   priv->params->hw_scan_status == HW_SCAN_STATUS_NONE,
+			   msecs_to_jiffies(5000));
 
-        count = 0;
+	if (priv->params->hw_scan_status != HW_SCAN_STATUS_NONE) {
+		rk915_err("%s-UMAC: No Scan complete after %ld ticks\n",
+			   priv->name, msecs_to_jiffies(5000));
+		return 0;
+	}
 
-check_scan_complete:
-        if (!hpriv->fw_error && wifi->params.hw_scan_status != HW_SCAN_STATUS_NONE &&
-		(count < msecs_to_jiffies(5000))) {
-                set_current_state(TASK_INTERRUPTIBLE);
+	rk915_dbg(RK915_DBG_SCAN, "%s-UMAC: Scan complete\n", priv->name);
 
-                if (schedule_timeout(1) == 0)
-                        count++;
-
-                goto check_scan_complete;
-        }
-
-        if (wifi->params.hw_scan_status != HW_SCAN_STATUS_NONE) {
-                RPU_ERROR_SCAN("%s-UMAC: No Scan complete after %ld ticks\n",
-                           priv->name, msecs_to_jiffies(5000));
-                return 0;
-        }
-
-        RPU_INFO_SCAN("%s-UMAC: Scan complete after %d timer ticks\n",
-                                        priv->name,
-                                        count);
-
-        return 0;
-
+	return 0;
 }
 
 int wait_for_cancel_hw_roc(struct img_priv *priv)
 {
-	int count = 0;
-
-check_cancel_hw_roc_complete:
-	if (!hpriv->fw_error && !priv->cancel_hw_roc_done && (count < CANCEL_HW_ROC_TIMEOUT_TICKS)) {
-		set_current_state(TASK_INTERRUPTIBLE);
-		if (schedule_timeout(1) == 0)
-			count++;
-		goto check_cancel_hw_roc_complete;
-	}
+	wait_event_timeout(priv->hal->wait_q,
+			   priv->hal->fw_error || priv->cancel_hw_roc_done,
+			   CANCEL_HW_ROC_TIMEOUT_TICKS);
 
 	if (!priv->cancel_hw_roc_done) {
-		RPU_ERROR_ROC("%s-UMAC: Warning: Didn't get CANCEL_HW_ROC_DONE after %ld timer ticks\n",
-		       priv->name,
-		       CANCEL_HW_ROC_TIMEOUT_TICKS);
-		if (hpriv->fw_error_processing)
+		rk915_err("%s-UMAC: Warning: Didn't get CANCEL_HW_ROC_DONE after %ld timer ticks\n",
+			priv->name,
+			CANCEL_HW_ROC_TIMEOUT_TICKS);
+		if (priv->hal->fw_error_processing)
 			return 0;
 		return -1;
 	}
 
-	RPU_DEBUG_ROC("%s-UMAC: Cancel HW RoC complet after %d timer ticks\n",
-					priv->name,
-					count);
+	rk915_dbg(RK915_DBG_ROC, "%s-UMAC: Cancel HW RoC complete\n", priv->name);
 
 	return 0;
-
 }
 
 int wait_for_channel_prog_complete(struct img_priv *priv)
 {
-	int count;
-
-	count = 0;
-
-	if (hpriv->during_pm_resume)
+	if (priv->hal->during_pm_resume)
 		return 0;
 
-check_ch_prog_complete:
-	if (!hpriv->fw_error && !priv->chan_prog_done && (count < CH_PROG_TIMEOUT_TICKS)) {
-		set_current_state(TASK_INTERRUPTIBLE);
-
-		if (schedule_timeout(1) == 0)
-			count++;
-
-		goto check_ch_prog_complete;
-	}
+	wait_event_timeout(priv->hal->wait_q,
+			   priv->hal->fw_error || priv->chan_prog_done,
+			   CH_PROG_TIMEOUT_TICKS);
 
 	if (!priv->chan_prog_done) {
-		RPU_ERROR_UMACIF("%s-UMAC: No channel prog done after %ld ticks\n",
+		rk915_err("%s-UMAC: No channel prog done after %ld ticks\n",
 			   priv->name, CH_PROG_TIMEOUT_TICKS);
 		return -1;
 	}
 
-	RPU_DEBUG_UMACIF("%s-UMAC: Channel Prog Complete after %d timer ticks\n",
-			priv->name, count);
+	rk915_dbg(RK915_DBG_UMACIF, "%s-UMAC: Channel Prog Complete\n", priv->name);
 
 	return 0;
-
 }
 
 
 int wait_for_reset_complete(struct img_priv *priv, int enable)
 {
-	int count;
 	int timeout;
-
-	count = 0;
 
 	if (enable)
 		timeout = RESET_TIMEOUT_TICKS;
 	else
 		timeout = msecs_to_jiffies(3000);
 
-check_reset_complete:
-	if (/*!hpriv->fw_error &&*/ !priv->reset_complete && (count < timeout)) {
-		set_current_state(TASK_INTERRUPTIBLE);
-
-		if (schedule_timeout(1) == 0)
-			count++;
-
-		goto check_reset_complete;
-	}
+	wait_event_timeout(priv->hal->wait_q, priv->reset_complete, timeout);
 
 	if (!priv->reset_complete) {
-		RPU_ERROR_MAIN("%s-UMAC: No reset complete after %d ticks\n",
+		rk915_err("%s-UMAC: No reset complete after %d ticks\n",
 			   priv->name, timeout);
-		rk915_signal_io_error(FW_ERR_RESET_CMD);
+		if (!enable) {
+			/* The firmware stops servicing the bus as soon as it
+			 * disables the LMAC, so this completion may never
+			 * arrive. The chip is power cycled before the next
+			 * bring-up, so do not treat it as an error.
+			 */
+			return 0;
+		}
+		rk915_signal_io_error(priv->hal, FW_ERR_RESET_CMD);
 		wait_for_fw_error_cmd_done(priv);
 		return -1;
 	}
 
-	RPU_DEBUG_MAIN("%s-UMAC: Reset complete after %d timer ticks\n",
-		   priv->name, count);
+	rk915_dbg(RK915_DBG_MAIN, "%s-UMAC: Reset complete\n", priv->name);
 	return 0;
-
 }
 
 int wait_for_read_csr_cmp(struct img_priv *priv)
 {
-	int count;
-
-	count = 0;
-
-check_read_csr_complete:
-	if (!hpriv->fw_error && !priv->read_csr_complete && (count < msecs_to_jiffies(1000))) {
-		set_current_state(TASK_INTERRUPTIBLE);
-
-		if (schedule_timeout(1) == 0)
-			count++;
-
-		goto check_read_csr_complete;
-	}
+	wait_event_timeout(priv->hal->wait_q,
+			   priv->hal->fw_error || priv->read_csr_complete,
+			   msecs_to_jiffies(1000));
 
 	if (!priv->read_csr_complete) {
-		RPU_ERROR_SCAN("%s-UMAC: No read_csr_complete after %ld ticks\n",
+		rk915_err("%s-UMAC: No read_csr_complete after %ld ticks\n",
 			   priv->name, msecs_to_jiffies(1000));
 		return 0;
 	}
 
-	RPU_INFO_SCAN("%s-UMAC: read_csr_complete after %d timer ticks\n",
-					priv->name,
-					count);
+	rk915_dbg(RK915_DBG_SCAN, "%s-UMAC: read_csr_complete\n", priv->name);
 
 	return 0;
-
 }
-
-#ifdef RPU_SLEEP_ENABLE
-int wait_for_hp_ready_blocking_sleep(void)
-{
-	int count;
-
-	count = 0;
-
-check_rpu_ready:
-	if (!waiting_for_rpu_ready && (count < RPU_READY_TIMEOUT_TICKS)) {
-		set_current_state(TASK_INTERRUPTIBLE);
-
-		if (0 == schedule_timeout(1))
-			count++;
-
-		goto check_rpu_ready;
-	}
-
-	if (!waiting_for_rpu_ready) {
-		RPU_ERROR_MAIN("%s-UMAC: No RPU ready interrupt after %ld ticks\n",
-			   __func__, RPU_READY_TIMEOUT_TICKS);
-		return -1;
-	}
-
-	RPU_DEBUG_MAIN("%s-UMAC: RPU is ready after %d timer ticks\n",
-					__func__,
-					count);
-
-	return 0;
-
-}
-
-int wait_for_hp_ready_blocking_busy_wait(void)
-{
-	int count;
-	unsigned long start = 0;
-
-	count = 0;
-
-	start = jiffies;
-
-	while (!waiting_for_rpu_ready &&
-	     time_before(jiffies, start + msecs_to_jiffies(1000))) {
-		cpu_relax();
-	}
-
-
-	if (!waiting_for_rpu_ready) {
-		RPU_ERROR_MAIN("%s-UMAC: No RPU ready interrupt after %ld ticks\n",
-			   hal_name, RPU_READY_TIMEOUT_TICKS);
-		return -1;
-	}
-
-	RPU_DEBUG_MAIN("%s-UMAC: RPU is ready after %d timer ticks\n",
-					hal_name,
-					count);
-
-	return 0;
-
-}
-#endif
 
 int wait_for_fw_error_process_complete(struct img_priv *priv)
 {
-	int count;
+	wait_event_timeout(priv->hal->wait_q, !priv->hal->fw_error_processing,
+			   FW_ERR_PROCESS_TIMEOUT_TICKS);
 
-	count = 0;
-
-fw_error_processing_complete:
-	if (hpriv->fw_error_processing && (count < FW_ERR_PROCESS_TIMEOUT_TICKS)) {
-		set_current_state(TASK_INTERRUPTIBLE);
-
-		if (schedule_timeout(1) == 0)
-			count++;
-
-		goto fw_error_processing_complete;
-	}
-
-	if (hpriv->fw_error_processing) {
-		RPU_ERROR_UMACIF("%s-UMAC: No fw_error_process complete after %ld ticks\n",
+	if (priv->hal->fw_error_processing) {
+		rk915_err("%s-UMAC: No fw_error_process complete after %ld ticks\n",
 			   priv->name, FW_ERR_PROCESS_TIMEOUT_TICKS);
 		return -1;
 	}
 
-	RPU_DEBUG_UMACIF("%s-UMAC: fw_error_process complete after %d timer ticks\n",
-			priv->name, count);
+	rk915_dbg(RK915_DBG_UMACIF, "%s-UMAC: fw_error_process complete\n", priv->name);
 
 	return 0;
-
 }
 
 int wait_for_fw_error_cmd_done(struct img_priv *priv)
 {
-	int count;
+	wait_event_timeout(priv->hal->wait_q, priv->hal->fw_error_cmd_done,
+			   msecs_to_jiffies(1000));
 
-	count = 0;
-
-fw_error_cmd_done:
-	if (!hpriv->fw_error_cmd_done && (count < msecs_to_jiffies(1000))) {
-		set_current_state(TASK_INTERRUPTIBLE);
-
-		if (schedule_timeout(1) == 0)
-			count++;
-
-		goto fw_error_cmd_done;
-	}
-
-	if (!hpriv->fw_error_cmd_done) {
-		RPU_ERROR_UMACIF("No fw_error_cmd done after %ld ticks\n",
+	if (!priv->hal->fw_error_cmd_done) {
+		rk915_err("No fw_error_cmd done after %ld ticks\n",
 			   msecs_to_jiffies(1000));
 		return -1;
 	}
 
-	RPU_DEBUG_UMACIF("fw_error_cmd_done after %d timer ticks\n",
-			count);
+	rk915_dbg(RK915_DBG_UMACIF, "fw_error_cmd_done\n");
 
 	return 0;
-
 }
 
-int wait_for_pm_resume_done(struct img_priv *priv)
+int wait_for_pm_resume_done(struct hal_priv *hal)
 {
-	int count;
+	wait_event_timeout(hal->wait_q, !hal->during_pm_resume,
+			   msecs_to_jiffies(1000));
 
-	count = 0;
-
-pm_resume_done:
-	if (hpriv->during_pm_resume && (count < msecs_to_jiffies(1000))) {
-		set_current_state(TASK_INTERRUPTIBLE);
-
-		if (schedule_timeout(1) == 0)
-			count++;
-
-		goto pm_resume_done;
-	}
-
-	if (hpriv->during_pm_resume) {
-		RPU_ERROR_UMACIF("No pm_resume done after %ld ticks\n",
+	if (hal->during_pm_resume) {
+		rk915_err("No pm_resume done after %ld ticks\n",
 			   msecs_to_jiffies(1000));
 		return -1;
 	}
 
-	RPU_DEBUG_UMACIF("pm_resume done after %d timer ticks\n",
-			count);
+	rk915_dbg(RK915_DBG_UMACIF, "pm_resume done\n");
 
 	return 0;
-
 }
 
-int wait_for_rxq_empty(struct img_priv *priv)
+int wait_for_rxq_empty(struct hal_priv *hal)
 {
-	int count;
+	wait_event_timeout(hal->wait_q, skb_queue_len(&hal->rxq) == 0,
+			   RXQ_EMPTY_TIMEOUT_TICKS);
 
-	count = 0;
-
-rxq_empty:
-	if (skb_queue_len(&hpriv->rxq) > 0 && (count < RXQ_EMPTY_TIMEOUT_TICKS)) {
-		set_current_state(TASK_INTERRUPTIBLE);
-
-		if (schedule_timeout(1) == 0)
-			count++;
-
-		goto rxq_empty;
-	}
-
-	if (skb_queue_len(&hpriv->rxq) > 0) {
-		RPU_ERROR_ROCOVERY("rxq not empty after %ld ticks\n",
+	if (skb_queue_len(&hal->rxq) > 0) {
+		rk915_err("rxq not empty after %ld ticks\n",
 			   RXQ_EMPTY_TIMEOUT_TICKS);
 		return -1;
 	}
 
-	RPU_DEBUG_ROCOVERY("wait_for_rxq_empty complete after %d timer ticks\n",
-			count);
+	rk915_dbg(RK915_DBG_RECOVERY, "%s complete\n", __func__);
 
 	return 0;
-
 }
 
 void update_aux_adc_voltage(struct img_priv *priv,
@@ -416,7 +239,7 @@ void update_aux_adc_voltage(struct img_priv *priv,
 {
 	static unsigned int index;
 
-	if (index > MAX_AUX_ADC_SAMPLES)
+	if (index >= MAX_AUX_ADC_SAMPLES)
 		index = 0;
 
 	priv->params->pdout_voltage[index++] = pdout;
@@ -461,8 +284,7 @@ int find_p2p_iface(struct img_priv *priv)
  */
 bool is_main_iface(u8 *if_addr)
 {
-	if (ether_addr_equal(if_addr, vif_macs[0])) {
+	if (ether_addr_equal(if_addr, vif_macs[0]))
 		return true;
-	}
 	return false;
 }
