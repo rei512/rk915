@@ -1,10 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Copyright (c) 2021, Fuzhou Rockchip Electronics Co., Ltd
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #ifndef _HOST_RPU_IF_H_
@@ -125,28 +121,28 @@ enum UMAC_VIF_CHANCTX_TYPE {
  * enum RPU_SLEEP_CONFIG_CHANGED - Flags to indicate what changed in Sleep
 				Controller configuration.
 
- * @PMFLAG_PWR_ON_VALUE_CHANGED - UCC_SLEEP_CTRL_PWR_ON_VALUE 
+ * @PMFLAG_PWR_ON_VALUE_CHANGED - UCC_SLEEP_CTRL_PWR_ON_VALUE
  * @PMFLAG_PWR_OFF_VALUE_CHANGED - UCC_SLEEP_CTRL_PWR_OFF_VALUE
  * @PMFLAG_RAM_ON_STATE_CHANGED - UCC_SLEEP_CTRL_PWR_OFF_VALUE
  * @PMFLAG_RAM_OFF_STATE_CHANGED - UCC_SLEEP_CTRL_RAM_OFF_STATE
- * @PMFLAG_PWR_ON_TIME_CHANGED - UCC_SLEEP_CTRL_PWR_ON_TIME 
- * @PMFLAG_PWR_OFF_TIME_CHANGED - UCC_SLEEP_CTRL_PWR_OFF_TIME 
- * @PMFLAG_RAM_ON_TIME_CHANGED - UCC_SLEEP_CTRL_RAM_ON_TIME 
- * @PMFLAG_RAM_OFF_TIME_CHANGED - UCC_SLEEP_CTRL_RAM_OFF_TIME 
+ * @PMFLAG_PWR_ON_TIME_CHANGED - UCC_SLEEP_CTRL_PWR_ON_TIME
+ * @PMFLAG_PWR_OFF_TIME_CHANGED - UCC_SLEEP_CTRL_PWR_OFF_TIME
+ * @PMFLAG_RAM_ON_TIME_CHANGED - UCC_SLEEP_CTRL_RAM_ON_TIME
+ * @PMFLAG_RAM_OFF_TIME_CHANGED - UCC_SLEEP_CTRL_RAM_OFF_TIME
  * @PMFLAG_SLEEP_FREQ_CHANGED - sleep_timer_freq_hz
  */
 
 
 enum RPU_SLEEP_CONFIG_CHANGED {
-	PMFLAG_PWR_ON_VALUE_CHANGED  =  0x0001,  
-	PMFLAG_PWR_OFF_VALUE_CHANGED =  0x0002,  
-	PMFLAG_RAM_ON_STATE_CHANGED  =  0x0004,  
-	PMFLAG_RAM_OFF_STATE_CHANGED =  0x0008,  
-	PMFLAG_PWR_ON_TIME_CHANGED   =  0x0010,  
-	PMFLAG_PWR_OFF_TIME_CHANGED  =  0x0020,  
-	PMFLAG_RAM_ON_TIME_CHANGED   =  0x0040,  
-	PMFLAG_RAM_OFF_TIME_CHANGED  =  0x0080,  
-	PMFLAG_SLEEP_FREQ_CHANGED    =  0x0100,   
+	PMFLAG_PWR_ON_VALUE_CHANGED  =  0x0001,
+	PMFLAG_PWR_OFF_VALUE_CHANGED =  0x0002,
+	PMFLAG_RAM_ON_STATE_CHANGED  =  0x0004,
+	PMFLAG_RAM_OFF_STATE_CHANGED =  0x0008,
+	PMFLAG_PWR_ON_TIME_CHANGED   =  0x0010,
+	PMFLAG_PWR_OFF_TIME_CHANGED  =  0x0020,
+	PMFLAG_RAM_ON_TIME_CHANGED   =  0x0040,
+	PMFLAG_RAM_OFF_TIME_CHANGED  =  0x0080,
+	PMFLAG_SLEEP_FREQ_CHANGED    =  0x0100,
 	PMFLAG_CLK_ADJ_VAL_CHANGED   =	0x0200,
 	PMFLAG_WAKEUP_TIME_CHANGED   =	0x8000,
 };
@@ -336,9 +332,6 @@ enum RPU_EVENT_TAG {
 	RPU_EVENT_MAC_STATS,
 	RPU_EVENT_UNUSED7,
 	RPU_EVENT_UNUSED8,
-#ifndef RK915	
-	RPU_EVENT_MSRMNT_COMPLETE,
-#endif
 	RPU_EVENT_ROC_STATUS,
 	RPU_EVENT_FW_ERROR,
 	RPU_EVENT_BLOCK_ALL,
@@ -426,7 +419,7 @@ struct hal_data {
  *          For TX this is sizeof(cmd_tx_ctrl) and for RX this is
  *          sizeof(wlan_rx_pkt).
  * @more_cmd_data: The meaning of this bit depends on direction TX/RX
- * 		   a) TX: it is used for commands whose size is greater than
+ *		   a) TX: it is used for commands whose size is greater than
  *                    MAX_CMD_SIZE. (Set to 1, if command is split into two or
  *                    more. Set to 0 otherwise).
  *		   b) RX: it is used to indicated whether the incoming data is
@@ -438,10 +431,10 @@ struct hal_data {
  */
 struct host_rpu_msg_hdr {
 	struct hal_data hal_data;
-	unsigned int descriptor_id; /* LSB 2 bytes as pool id, MSB 2 bytes
-				     * queue num, pool ID of 0xFFFF indicates
-				     * no payload
-				     */
+	/* LSB 2 bytes pool id, MSB 2 bytes queue num,
+	 * pool ID of 0xFFFF indicates no payload
+	 */
+	unsigned int descriptor_id;
 	unsigned int payload_length;
 	unsigned int id;
 	unsigned int length;
@@ -494,8 +487,8 @@ struct ssid {
 /* Commands */
 
 /**
-  * struct cmd_txrx_test - Command used for tx rx stability test.
-  */
+ * struct cmd_txrx_test - Command used for tx rx stability test.
+ */
 struct cmd_txrx_test {
 	struct host_rpu_msg_hdr hdr;
 #define TXRX_TEST_START_TX 0
@@ -532,9 +525,9 @@ struct fw_params {
 	unsigned char debug_flag;
 	unsigned char dis_wifi_isr_thd;
 	unsigned char en_wifi_isr_thd;
-} __attribute__ ((__packed__));
+} __packed;
 
-enum fw_priv_cmd_type{
+enum fw_priv_cmd_type {
 	DUMP_TXRX_COUNT_INFO = 1,
 	DUMP_TXRX_BUF_INFO,
 	DUMP_REG_INFO,
@@ -555,8 +548,8 @@ enum fw_priv_cmd_type{
 };
 
 /**
-  * struct fw_priv_cmd - Command used for fw info dump.
-  */
+ * struct fw_priv_cmd - Command used for fw info dump.
+ */
 struct fw_priv_cmd {
 	struct host_rpu_msg_hdr hdr;
 #define DUMP_FW_CRASH_INFO			0x70616E63
@@ -566,16 +559,16 @@ struct fw_priv_cmd {
 	int fw_skip_rx_pkt_submit;
 	struct fw_params params;
 	/*
-	 * Value = 0 --> normal operation 
-	 * Value > 0 --> sniffer operation 
-	 * Value = 1 --> receive all data and managment frames - both unicast and broadcast 
-	 * Value = 2 --> receive broadcast data frames only 
-	 * Value = 3 --> receive broadcast and unciast data only 
+	 * Value = 0 --> normal operation
+	 * Value > 0 --> sniffer operation
+	 * Value = 1 --> receive all data and managment frames - both unicast and broadcast
+	 * Value = 2 --> receive broadcast data frames only
+	 * Value = 3 --> receive broadcast and unciast data only
 	 */
-	 /* sniffer & 0x000F ->  Sniffer mode specified below
-	     sniffer & 0x00F0 ->  Sniffer time interval when no broadcast info received(time unit 50ms)
-	     sniffer & 0x0F00 ->  Sniffer timer interval when broadcast info received(time unit 50ms)
-	  */
+	/* sniffer & 0x000F -> sniffer mode specified below
+	 * sniffer & 0x00F0 -> interval when no broadcast info (50 ms units)
+	 * sniffer & 0x0F00 -> interval when broadcast info seen (50 ms units)
+	 */
 	int sniffer;
 	/*
 	 * first byte of wlan0 and p2p mac address
@@ -585,8 +578,8 @@ struct fw_priv_cmd {
 } __IMG_PKD;
 
 /**
-  * struct cmd_set_phy_thresh - set phy threshholds
-  */
+ * struct cmd_set_phy_thresh - set phy threshholds
+ */
 struct cmd_update_phy_thresh {
 	struct host_rpu_msg_hdr hdr;
 	unsigned char tx_boost;
@@ -632,7 +625,7 @@ struct cmd_update_phy_thresh {
  * @rate: The rate value(s), at which the packet transmission needs to be
  *        attempted as dictated by the rate control algorithm (or) /proc
  *        interface.
- * 	  If the most significant bit is one it's a 11n rate.
+ *	  If the most significant bit is one it's a 11n rate.
  * @rate_flags: Per rate flags as dictated by the rate control algorithm
  *              (or) /proc interface.
  * @num_spatial_streams: Number of spatial streams to be used per rate as
@@ -745,9 +738,6 @@ struct cmd_tx_ctrl {
 
 	unsigned char per_pkt_crypto_params[MAX_TX_CMDS]
 					   [PER_PKT_CRYPTO_PARAMS_SIZE];
-#ifdef TX_SG_MODE
-	unsigned char pad[59];
-#endif
 	unsigned int *p_frame_ddr_pointer[MAX_TX_CMDS];
 } __IMG_PKD;
 
@@ -779,10 +769,10 @@ struct cmd_reset {
 #define LMAC_NO_SLEEP   0x0020  /* LMAC will never sleep */
 #define LOAD_FACTORY_CAL 0x0040
 	unsigned int type;
-        int unused1;
-        unsigned int unused2;
+	int unused1;
+	unsigned int unused2;
 	unsigned char rf_params[RF_PARAMS_SIZE];
-        unsigned int unused3;
+	unsigned int unused3;
 	struct bgscan_params bg_scan;
 	unsigned char num_spatial_streams;
 	unsigned int system_rev;
@@ -848,7 +838,7 @@ struct cmd_scan {
 	unsigned char channel_list[50];
 	unsigned char chan_max_power[50];
 	unsigned char chan_flags[50];
-#ifdef ENABLE_SPLIT_MULT_SSID_SCAN	
+#ifdef ENABLE_SPLIT_MULT_SSID_SCAN
 	struct ssid ssids[1];
 #else
 	struct ssid ssids[MAX_NUM_SSIDS];
@@ -935,14 +925,14 @@ struct cmd_tx_pwr {
 } __IMG_PKD;
 
 struct cmd_cfg_misc {
-    struct host_rpu_msg_hdr hdr;
-#define RPU_MISC_CFG_SNIFF_MODE_MASK 0x1	
-    unsigned int flags;  // set RPU_MISC_CFG_SNIFF_MODE_MASK bit
+	struct host_rpu_msg_hdr hdr;
+#define RPU_MISC_CFG_SNIFF_MODE_MASK 0x1
+	unsigned int flags;  // set RPU_MISC_CFG_SNIFF_MODE_MASK bit
 #define RPU_MISC_CFG_SNIFF_MODE_NONE   0x0
 #define RPU_MISC_CFG_SNIFF_MODE_ALL    0x1
 #define RPU_MISC_CFG_SNIFF_MODE_BCAST  0x2
-#define RPU_MISC_CFG_SNIFF_MODE_BUCAST 0x3    
-    unsigned int sniff_mode; // set RPU_MISC_CFG_SNIFF_MODE_NONE/ALL/BCAST/BUCAST
+#define RPU_MISC_CFG_SNIFF_MODE_BUCAST 0x3
+	unsigned int sniff_mode; // set RPU_MISC_CFG_SNIFF_MODE_NONE/ALL/BCAST/BUCAST
 } __IMG_PKD;
 
 /**
@@ -1332,11 +1322,11 @@ struct cmd_set_defaultkey {
  * @hdr: Host-Firmware message header (id field needs to be set to
  *       RPU_CMD_CHANCTX_TIME_INFO).
  * @config_mask: Config Mask for setting various values related to sleep
-		 controller. 
- * This command is used to specify information about configuring various values 
+		 controller.
+ * This command is used to specify information about configuring various values
  * related to sleep controller.
  * @pwr_on_value: UCC_SLEEP_CTRL_PWR_ON_VALUE registers
- * @pwr_off_value: UCC_SLEEP_CTRL_PWR_OFF_VALUE registers 
+ * @pwr_off_value: UCC_SLEEP_CTRL_PWR_OFF_VALUE registers
  * @ram_on_state: UCC_SLEEP_CTRL_PWR_OFF_VALUE registers
  * @ram_off_state: UCC_SLEEP_CTRL_RAM_OFF_STATE registers
  * @pwr_on_time: UCC_SLEEP_CTRL_PWR_ON_TIME registers
@@ -1350,37 +1340,37 @@ struct cmd_set_defaultkey {
 struct cmd_cfg_pwrmgmt {
 	struct host_rpu_msg_hdr hdr;
 	enum RPU_SLEEP_CONFIG_CHANGED sleep_config_changed;
-	unsigned int pwr_on_value[2]; 
+	unsigned int pwr_on_value[2];
 	unsigned int pwr_off_value[2];
-	unsigned int ram_on_state[2];  
+	unsigned int ram_on_state[2];
 	unsigned int ram_off_state[2];
-	unsigned int pwr_on_time[32];  
+	unsigned int pwr_on_time[32];
 	unsigned int pwr_off_time[32];
-	unsigned int ram_on_time[4];  
+	unsigned int ram_on_time[4];
 	unsigned int ram_off_time[4];
 	unsigned int sleep_timer_freq_hz;
 	unsigned int wakeup_time;
 	int clk_adj_val;
-}__IMG_PKD;
+} __IMG_PKD;
 
 #define LMAC_WATCHDOG_PHY_HANG_RESET_ENABLE   0x1
 #define LMAC_FILTER_PROBE_REQ_IN_PS_ENABLE    0x2
 #define LMAC_FILTER_BCMC_DATA_IN_PS_ENABLE    0x4
 #define LMAC_NULL_FRAME_IN_PS_ENABLE          0x8
 struct cmd_patch_feature {
-    struct host_rpu_msg_hdr hdr;
-    unsigned int feature_val;
-}__IMG_PKD;
+	struct host_rpu_msg_hdr hdr;
+	unsigned int feature_val;
+} __IMG_PKD;
 
 struct cmd_ip_address {
-    struct host_rpu_msg_hdr hdr;
-    unsigned int addr;
-}__IMG_PKD;
+	struct host_rpu_msg_hdr hdr;
+	unsigned int addr;
+} __IMG_PKD;
 
 struct cmd_read_csr {
-    struct host_rpu_msg_hdr hdr;
-    unsigned int addr;
-}__IMG_PKD;
+	struct host_rpu_msg_hdr hdr;
+	unsigned int addr;
+} __IMG_PKD;
 
 /* Events */
 
@@ -1391,16 +1381,16 @@ struct dump_info {
 	/*1: means this event is the end of dump info part*/
 	unsigned int end;
 	unsigned char data[1];
-}__IMG_PKD;
+} __IMG_PKD;
 
 /**
  * struct fw_priv_cmd_done - Event used to signal the completion of info dump
- *        
+ *
  */
 struct fw_priv_cmd_done {
 	struct host_rpu_msg_hdr hdr;
-	struct dump_info info; // must be first item after hdr	
-}__IMG_PKD;
+	struct dump_info info; // must be first item after hdr
+} __IMG_PKD;
 
 /**
  * struct umac_event_tx_done - Event used to signal the completion of
@@ -1653,10 +1643,8 @@ struct umac_event_mac_stats {
 	unsigned int csync_abort_agctrig_cntr;
 	unsigned int crc_success_cnt;
 	unsigned int crc_fail_cnt;
-#ifdef RPU_SLEEP_ENABLE
-	unsigned int rpu_boot_cnt;  
+	unsigned int rpu_boot_cnt;
 	unsigned int sleep_stats[12];
-#endif
 } __IMG_PKD;
 
 /**
@@ -1714,9 +1702,6 @@ struct host_event_disconnect {
  */
 struct host_event_reset_complete {
 	struct host_rpu_msg_hdr hdr;
-#ifndef RK915	
-	unsigned int unused[16];
-#endif
 	char version[6+24]; // lmac version + FW build time
 } __IMG_PKD;
 

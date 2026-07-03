@@ -1,19 +1,15 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Copyright (c) 2021, Fuzhou Rockchip Electronics Co., Ltd
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #ifndef _RPU_H_
 #define _RPU_H_
 
 /* RPU Porting information: Based on RPU Config.
-
- * These are the only values which need to be modified as per 
- * a) host memory map 
+ *
+ * These are the only values which need to be modified as per
+ * a) host memory map
  * b) HOSt <->MCU interrupt configuration.
  * c) RPU Config specific details
  */
@@ -56,46 +52,35 @@
 	by responding to the mtx_int interrupt.
 */
 
-/* SYSBUS - System Control - REGSYSREG 
+/* SYSBUS - System Control - REGSYSREG
  * RPU_CORE_REG is a subset of System Bus Registers
  */
 #define HAL_RPU_CORE_REG_OFFSET	0x400
 
 /* Register HOST_TO_MTX_CMD */
 #define HOST_TO_MTX_CMD 0x0030
-#define HOST_TO_MTX_CMD_ADDR ((hpriv->rpu_mem_addr) + \
-				    HOST_TO_MTX_CMD)
 #define MTX_HOST_INT_SHIFT 31
 
 /* Register MTX_TO_HOST_CMD */
 #define MTX_TO_HOST_CMD 0x0034
-#define MTX_TO_HOST_CMD_ADDR ((hpriv->rpu_mem_addr) + \
-				    MTX_TO_HOST_CMD)
 
 /* Register HOST_TO_MTX_ACK */
 #define HOST_TO_MTX_ACK 0x0038
-#define HOST_TO_MTX_ACK_ADDR ((hpriv->rpu_mem_addr) + \
-				    HOST_TO_MTX_ACK)
 #define MTX_INT_CLR_SHIFT 31
 
 /* Register MTX_TO_HOST_ACK */
 #define MTX_TO_HOST_ACK 0x003C
-#define MTX_TO_HOST_ACK_ADDR ((hpriv->rpu_mem_addr) + \
-				    MTX_TO_HOST_ACK)
 
 /* Register MTX_INT_ENABLE
  * Enable INT line within META Block
  */
 #define MTX_INT_ENABLE 0x0044
-#define MTX_INT_ENABLE_ADDR ((hpriv->rpu_mem_addr) + \
-				   MTX_INT_ENABLE)
 #define MTX_INT_EN_SHIFT 31
 
 /* System Level Interrupt Control for each block.
  * Enable INT line for META block.
  */
 #define SYS_INT_ENAB 0x0000
-#define SYS_INT_ENAB_ADDR ((hpriv->rpu_mem_addr) + SYS_INT_ENAB)
 #define SYS_INT_MTX_IRQ_ENAB_SHIFT 15
 
 /*********************************************************************
@@ -121,18 +106,8 @@ enum rpu_mem_region {
 
 
 #define RPU_SYSBUS_REG     0xA4
-#define UCCP_BEV	   0xBF
 
-#define REGMIPSMCU 0xA4000000                	       /* 7.5 */
-#define MIPS_MCU_CONTROL REGMIPSMCU + 0x0              /* 13.1.1 */
-#define MIPS_MCU_BOOT_EXCP_INSTR_0 REGMIPSMCU + 0x50   /* 13.1.15 */
-#define MIPS_MCU_BOOT_EXCP_INSTR_1 REGMIPSMCU + 0x54   /* 13.1.16 */
-#define MIPS_MCU_BOOT_EXCP_INSTR_2 REGMIPSMCU + 0x58   /* 13.1.17 */
-#define MIPS_MCU_BOOT_EXCP_INSTR_3 REGMIPSMCU + 0x5c   /* 13.1.18 */
 
-#define MIPS_MCU_SYS_CORE_MEM_CTRL  REGMIPSMCU + 0x30  /* 13.1.10 */
-#define MIPS_MCU_SYS_CORE_MEM_WDATA REGMIPSMCU + 0x34  /* 13.1.11 */
-#define MIPS_MCU_SYS_CORE_MEM_RDATA REGMIPSMCU + 0x38  /* 13.1.11 */
 
 
 #define MTX_REG_INDIRECT(unit, reg) (((reg & 0x7) << 4) | (unit & 0xF))
