@@ -1,10 +1,11 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef _RK915_FIRMWARE_H_
 #define _RK915_FIRMWARE_H_
 
-#define FW_LOADER_FROM_USER
 
-// 1: use flip_open to get firmware; 0 use request_firmware
-#define FW_LOADER_FROM_USER_OPEN	1
+#define RK915_FW_FILE		"rockchip/rk915_fw.bin"
+#define RK915_PATCH_FILE	"rockchip/rk915_patch.bin"
+
 #define MAX_FW_BUF_SIZE (64*1024)
 #define MAX_PATCH_BUF_SIZE (17*1024)
 #define MAX_BLOCK_DATA_SIZE 4096
@@ -21,13 +22,14 @@ struct firmware_info {
 	int cal_size;
 	unsigned char *cal_data;
 	int rf_para_size;
-	unsigned char *rf_para_data;	
+	unsigned char *rf_para_data;
 	unsigned char *fw_data_check;
 	unsigned char *fw_start_data;
 	const struct firmware *fw_fw;
 	const struct firmware *patch_fw;
 	const struct firmware *patch2_fw;
 	const struct firmware *cal_fw;
+	const struct firmware *rf_para_fw;
 };
 
 #define RF_CAL_DATA_SIZE 156
@@ -45,6 +47,7 @@ struct rf_cal_hdr {
 #define RF_PARA_DATA_FILE	"rk915_rf_para.txt"
 
 int rk915_download_firmware(struct hal_priv *priv);
+int rk915_download_firmware_patch_only(struct hal_priv *priv);
 int rk915_alloc_firmware_buf(struct firmware_info *fw_info);
 void rk915_free_firmware_buf(struct firmware_info *fw_info);
 void rk915_mem_check2(struct hal_priv *priv, unsigned int addr, unsigned int len);
