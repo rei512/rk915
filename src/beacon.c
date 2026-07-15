@@ -1,22 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2021, Fuzhou Rockchip Electronics Co., Ltd
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include "core.h"
 
-void modify_beacon_params (struct umac_vif *uvif,
+void modify_beacon_params(struct umac_vif *uvif,
 				  struct ieee80211_bss_conf *bss_conf)
 {
 	unsigned int bcn_int = 0;
 	unsigned long bcn_tim_val = 0;
 	int ret = 0;
 
-	RPU_DEBUG_VIF("%s: enable_beacon=%d\n", __func__, uvif->vif->bss_conf.enable_beacon);
+	rk915_dbg(RK915_DBG_VIF, "%s: enable_beacon=%d\n", __func__, uvif->vif->bss_conf.enable_beacon);
 
 	if (uvif->vif->bss_conf.enable_beacon == true) {
 
@@ -26,41 +22,24 @@ void modify_beacon_params (struct umac_vif *uvif,
 		mod_timer(&uvif->bcn_timer,
 			  jiffies + bcn_tim_val);
 
-		CALL_RPU(rpu_prog_vif_beacon_int,
-			  uvif->vif_index,
-			  uvif->vif->addr,
-			  bcn_int);
+		ret = rpu_prog_vif_beacon_int(uvif->vif_index, uvif->vif->addr, bcn_int);
+		if (ret != 0)
+			goto prog_rpu_fail;
 	} else {
-		del_timer(&uvif->bcn_timer);
+		timer_delete(&uvif->bcn_timer);
 	}
 prog_rpu_fail:
 	return;
 
 }
 
-//INIT_GET_SPEND_TIME(bcn_start_time, bcn_stop_time);
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 static void vif_bcn_timer_expiry(struct timer_list *t)
 {
-	struct umac_vif *uvif = from_timer(uvif, t, bcn_timer);
-#else
-static void vif_bcn_timer_expiry(unsigned long data)
-{
-	struct umac_vif *uvif = (struct umac_vif *)data;
-#endif
+	struct umac_vif *uvif = timer_container_of(uvif, t, bcn_timer);
 	struct sk_buff *skb, *temp;
 	struct sk_buff_head bcast_frames;
 
-	RPU_DEBUG_VIF("%s: enable_beacon=%d\n", __func__, uvif->vif->bss_conf.enable_beacon);
-	/*{ // check beacon frame interval
-		unsigned long itv;
-		START_GET_SPEND_TIME(bcn_start_time, bcn_stop_time);
-		itv = GET_SPEND_TIME_US(bcn_stop_time, bcn_start_time)/1000;
-		if (itv > 120 || itv < 90)
-			RPU_ERROR_VIF("beacon interval = %ld\n", itv);
-		END_GET_SPEND_TIME(bcn_start_time, bcn_stop_time);
-	}*/
-
+	rk915_dbg(RK915_DBG_VIF, "%s: enable_beacon=%d\n", __func__, uvif->vif->bss_conf.enable_beacon);
 	if (uvif->vif->bss_conf.enable_beacon == false)
 		return;
 
@@ -103,9 +82,9 @@ static void vif_bcn_timer_expiry(unsigned long data)
 			 * context.
 			 */
 			rpu_tx_frame(skb,
-					     NULL,
-					     uvif->priv,
-					     true);
+						NULL,
+						uvif->priv,
+						true);
 		}
 
 		spin_unlock_bh(&uvif->priv->bcast_lock);
@@ -123,9 +102,9 @@ static void vif_bcn_timer_expiry(unsigned long data)
 		 * current channel context.
 		 */
 		rpu_tx_frame(skb,
-				     NULL,
-				     uvif->priv,
-				     true);
+					NULL,
+					uvif->priv,
+					true);
 
 	}
 reschedule_timer:
@@ -133,19 +112,13 @@ reschedule_timer:
 
 }
 
-void init_beacon (struct umac_vif *uvif)
+void init_beacon(struct umac_vif *uvif)
 {
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 	timer_setup(&uvif->bcn_timer, vif_bcn_timer_expiry, 0);
-#else
-	init_timer(&uvif->bcn_timer);
-	uvif->bcn_timer.data = (unsigned long)uvif;
-	uvif->bcn_timer.function = vif_bcn_timer_expiry;
-#endif
 }
 
-void deinit_beacon (struct umac_vif *uvif)
+void deinit_beacon(struct umac_vif *uvif)
 {
-	del_timer(&uvif->bcn_timer);
+	timer_delete(&uvif->bcn_timer);
 
 }

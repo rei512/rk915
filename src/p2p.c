@@ -1,10 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2021, Fuzhou Rockchip Electronics Co., Ltd
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include <net/cfg80211.h>
@@ -14,35 +10,25 @@
 #include "p2p.h"
 #include "utils.h"
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 extern void roc_timer_expiry(struct timer_list *t);
-#else
-extern void roc_timer_expiry(unsigned long data);
-#endif
 
-void init_roc_timeout_timer (struct img_priv *priv)
+void init_roc_timeout_timer(struct img_priv *priv)
 {
-	RPU_DEBUG_ROC("%s: %p\n", __func__, priv);
+	rk915_dbg(RK915_DBG_ROC, "%s: %p\n", __func__, priv);
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(4, 6, 0))
 	timer_setup(&priv->roc_timer, roc_timer_expiry, 0);
-#else
-	init_timer(&priv->roc_timer);
-	priv->roc_timer.data = (unsigned long)NULL;
-	priv->roc_timer.function = roc_timer_expiry;
-#endif
 }
 
 void start_roc_timeout_timer(struct img_priv *priv, int timeout)
 {
-	RPU_DEBUG_ROC("%s: %p\n", __func__, priv);
+	rk915_dbg(RK915_DBG_ROC, "%s: %p\n", __func__, priv);
 	mod_timer(&priv->roc_timer, jiffies + msecs_to_jiffies(timeout));
 }
 
-void deinit_roc_timeout_timer (struct img_priv *priv)
+void deinit_roc_timeout_timer(struct img_priv *priv)
 {
-	RPU_DEBUG_ROC("%s: %p\n", __func__, priv);
-	del_timer(&priv->roc_timer);
+	rk915_dbg(RK915_DBG_ROC, "%s: %p\n", __func__, priv);
+	timer_delete(&priv->roc_timer);
 }
 
 void rpu_roc_complete_work(struct work_struct *work)
@@ -78,11 +64,11 @@ void rpu_roc_complete_work(struct work_struct *work)
 
 	if (priv->cancel_roc == 0) {
 		ieee80211_remain_on_channel_expired(priv->hw);
-		RPU_DEBUG_ROC("%s:%d ROC STOPPED..\n", __func__, __LINE__);
+		rk915_dbg(RK915_DBG_ROC, "%s:%d ROC STOPPED..\n", __func__, __LINE__);
 	} else {
 		priv->cancel_hw_roc_done = 1;
 		priv->cancel_roc = 0;
-		RPU_DEBUG_ROC("%s:%d ROC CANCELLED..\n", __func__, __LINE__);
+		rk915_dbg(RK915_DBG_ROC, "%s:%d ROC CANCELLED..\n", __func__, __LINE__);
 	}
 
 	/* Start the ROC queue */
@@ -91,10 +77,10 @@ void rpu_roc_complete_work(struct work_struct *work)
 }
 
 int remain_on_channel(struct ieee80211_hw *hw,
-			     struct ieee80211_vif *vif,
-			     struct ieee80211_channel *channel,
-			     int duration,
-			     enum ieee80211_roc_type type)
+				struct ieee80211_vif *vif,
+				struct ieee80211_channel *channel,
+				int duration,
+				enum ieee80211_roc_type type)
 {
 	struct img_priv *priv = (struct img_priv *)hw->priv;
 	unsigned int pri_chnl_num =
@@ -102,31 +88,23 @@ int remain_on_channel(struct ieee80211_hw *hw,
 	int ret = 0;
 
 	mutex_lock(&priv->mutex);
-	RPU_DEBUG_ROC("%s:%d The Params are:",
+	rk915_dbg(RK915_DBG_ROC, "%s:%d The Params are:",
 					__func__,
 					__LINE__);
-	RPU_DEBUG_ROC(" channel:%d duration:%d type: %d\n",
+	rk915_dbg(RK915_DBG_ROC, " channel:%d duration:%d type: %d\n",
 			ieee80211_frequency_to_channel(channel->center_freq),
 			duration,
 			type);
 
 	if (priv->roc_params.roc_in_progress ||
-		priv->roc_params.roc_starting || 
-	    priv->params->hw_scan_status != HW_SCAN_STATUS_NONE) {
-		RPU_INFO_ROC("%s:%d Dropping roc...Busy\n",
+		priv->roc_params.roc_starting ||
+		priv->params->hw_scan_status != HW_SCAN_STATUS_NONE) {
+		rk915_dbg(RK915_DBG_ROC, "%s:%d Dropping roc...Busy\n",
 				__func__,
 				__LINE__);
 		mutex_unlock(&priv->mutex);
-#if 0//def RK915
-		return 0;
-#else		
 		return -EBUSY;
-#endif
 	}
-
-#ifdef RK3036_DONGLE
-	start_roc_timeout_timer(priv, duration*3);
-#endif
 
 	priv->roc_params.roc_starting = 1;
 
@@ -137,11 +115,9 @@ int remain_on_channel(struct ieee80211_hw *hw,
 	if (duration != 10 && type == ROC_TYPE_OFFCHANNEL_TX)
 		type = ROC_TYPE_NORMAL;
 
-	CALL_RPU(rpu_prog_roc,
-		  ROC_START,
-		  pri_chnl_num,
-		  duration,
-		  type);
+	ret = rpu_prog_roc(ROC_START, pri_chnl_num, duration, type);
+	if (ret != 0)
+		goto prog_rpu_fail;
 
 
 prog_rpu_fail:
@@ -149,49 +125,32 @@ prog_rpu_fail:
 	return ret;
 }
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(5, 10, 0))
 int cancel_remain_on_channel(struct ieee80211_hw *hw,
 						struct ieee80211_vif *vif)
-#else
-int cancel_remain_on_channel(struct ieee80211_hw *hw)
-#endif
 {
 	struct img_priv *priv = (struct img_priv *)hw->priv;
 	int ret = 0;
-#ifdef RK3036_DONGLE
-	int index;
-	int skip = 0;
 
-	index = find_main_iface(priv);
-	if (index != MAX_VIFS) {
-		if (priv->vifs[index] && 
-		    priv->vifs[index]->bss_conf.enable_beacon)
-			skip = 1;
-	}
-	if (skip) {
-		RPU_INFO_ROC("%s:%d Cancel HW ROC skip\n",
-			__func__, __LINE__);
-		return -1;
-	}
-#endif
 	mutex_lock(&priv->mutex);
 
 	if (priv->roc_params.roc_in_progress) {
 		priv->cancel_hw_roc_done = 0;
 		priv->cancel_roc = 1;
-		RPU_DEBUG_ROC("%s:%d Cancelling HW ROC....\n",
+		rk915_dbg(RK915_DBG_ROC, "%s:%d Cancelling HW ROC....\n",
 				__func__, __LINE__);
-		CALL_RPU(rpu_prog_roc, ROC_STOP, 0, 0, 0);
+		ret = rpu_prog_roc(ROC_STOP, 0, 0, 0);
+		if (ret != 0)
+			goto prog_rpu_fail;
 
 		mutex_unlock(&priv->mutex);
 
 		if (!wait_for_cancel_hw_roc(priv)) {
-			RPU_DEBUG_ROC("%s:%d Cancel HW ROC....done\n",
+			rk915_dbg(RK915_DBG_ROC, "%s:%d Cancel HW ROC....done\n",
 							__func__,
 							__LINE__);
 			ret = 0;
 		} else {
-			RPU_ERROR_ROC("%s:%d Cancel HW ROC..timedout\n",
+			rk915_err("%s:%d Cancel HW ROC..timedout\n",
 							__func__,
 							__LINE__);
 			ret = -1;
@@ -244,9 +203,9 @@ void rpu_noa_event(int event, struct umac_event_noa *noa, void *context,
 		uvif->noa_active = noa->noa_active;
 
 		if (uvif->noa_active) {
-			RPU_DEBUG_P2P("%s: noa active = %d, ",
+			rk915_dbg(RK915_DBG_P2P, "%s: noa active = %d, ",
 					priv->name, noa->noa_active);
-			RPU_DEBUG_P2P("ap_present = %d\n",
+			rk915_dbg(RK915_DBG_P2P, "ap_present = %d\n",
 					noa->ap_present);
 
 			uvif->noa_tx_allowed = noa->ap_present;
@@ -257,7 +216,7 @@ void rpu_noa_event(int event, struct umac_event_noa *noa, void *context,
 					transmit = true;
 			}
 		} else {
-			RPU_DEBUG_P2P("%s: noa active = %d\n",
+			rk915_dbg(RK915_DBG_P2P, "%s: noa active = %d\n",
 				 priv->name, noa->noa_active);
 
 			uvif->noa_tx_allowed = 1;
@@ -276,9 +235,9 @@ void rpu_noa_event(int event, struct umac_event_noa *noa, void *context,
 
 	if (transmit) {
 		rpu_tx_frame(skb,
-				     NULL,
-				     priv,
-				     false);
+					NULL,
+					priv,
+					false);
 	}
 }
 
