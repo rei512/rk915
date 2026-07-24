@@ -1,10 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2021, Fuzhou Rockchip Electronics Co., Ltd
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include "core.h"
@@ -13,49 +9,8 @@
 #define TX_TO_MACDEV(x) ((struct img_priv *) \
 			 (container_of(x, struct img_priv, tx)))
 
-#ifdef STA_AP_COEXIST
-static int find_ie(u8 *frame, int len, int ie, int ie_start)
-{
-	int offset = 0;
-	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)frame;
-
-	offset += ieee80211_hdrlen(hdr->frame_control);
-	offset += ie_start;
-	while(offset < len) {
-		if (frame[offset] == ie) {
-			return offset;
-		}
-		offset += frame[offset+1] + 2;
-	}
-
-	return 0;
-}
-
-static void change_channel(u8 *frame, int len, int ch, u8 ie_id)
-{
-	int offset;
-	
-	offset = find_ie(frame, len, ie_id, 12);
-	if (offset)
-		frame[offset + 2] = ch;
-}
-
-static void adjust_beacon_ie(struct img_priv *priv, struct sk_buff *skb)
-{
-	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
-    
-	if (ieee80211_is_beacon(hdr->frame_control) ||
-	    ieee80211_is_probe_resp(hdr->frame_control)) {
-		// change the channel of DSPS IE
-		change_channel(skb->data, skb->len, priv->pri_chnl_num, 0x3);
-		// change the Primary Channel in HT Info
-		change_channel(skb->data, skb->len, priv->pri_chnl_num, 0x3d);
-	}
-}
-#endif
-
 void rpu_unblock_all_frames(struct img_priv *priv,
-					    int ch_id)
+						int ch_id)
 {
 	int txq_len = 0;
 	int i = 0, cnt = 0;
@@ -71,8 +26,7 @@ void rpu_unblock_all_frames(struct img_priv *priv,
 	tx = &priv->tx;
 
 	for (i = 0; i < NUM_ACS; i++) {
-		if (tx->queue_stopped_bmp & (1 << i))
-		{
+		if (tx->queue_stopped_bmp & (1 << i)) {
 			ieee80211_wake_queue(priv->hw, tx_queue_unmap(i));
 			tx->queue_stopped_bmp &= ~(1 << (i));
 		}
@@ -120,7 +74,7 @@ void rpu_unblock_all_frames(struct img_priv *priv,
 
 			if (pkts_pend == 0) {
 				__clear_bit(curr_bit,
-					    &tx->buf_pool_bmp[pool_id]);
+						&tx->buf_pool_bmp[pool_id]);
 				spin_unlock_bh(&tx->lock);
 				continue;
 			}
@@ -130,20 +84,13 @@ void rpu_unblock_all_frames(struct img_priv *priv,
 		spin_unlock_bh(&tx->lock);
 
 		ret = __rpu_tx_frame(priv,
-					     queue,
-					     i,
-					     0,
-					     0); /* TODO: Currently sending 0
-						  * since this param is not used
-						  * as expected in the orig
-						  * code for multiple frames etc
-						  * Need to set this
-						  * properly when the orig code
-						  * logic is corrected
-						  */
+						queue,
+						i,
+						0,
+						0);
 		if (ret < 0) {
-			RPU_ERROR_TX("%s: Queueing of TX frame to FW failed\n",
-			       __func__);
+			rk915_err("%s: Queueing of TX frame to FW failed\n",
+				__func__);
 		}
 	}
 }
@@ -153,32 +100,29 @@ static void wait_for_tx_complete(struct tx_config *tx)
 	int count = 0;
 	struct img_priv *priv = TX_TO_MACDEV(tx);
 
-	/*if (priv->fw_error)
-		return;*/
-
 	/* Find_last_bit: Returns the bit number of the first set bit,
 	 * or size.
 	 */
 	while (find_last_bit(tx->buf_pool_bmp,
-			     NUM_TX_DESCS) != NUM_TX_DESCS) {
+				NUM_TX_DESCS) != NUM_TX_DESCS) {
 		count++;
 
 		if (count < TX_COMPLETE_TIMEOUT_TICKS) {
 			set_current_state(TASK_INTERRUPTIBLE);
 			schedule_timeout(1);
 		} else {
-			RPU_DEBUG_TX("%s-UMACTX:WARNING: ", priv->name);
-			RPU_DEBUG_TX("TX complete failed!!\n");
-			RPU_DEBUG_TX("%s-UMACTX:After ", priv->name);
-			RPU_DEBUG_TX("%ld: bitmap is: 0x%lx\n",
-			       TX_COMPLETE_TIMEOUT_TICKS,
-			       tx->buf_pool_bmp[0]);
+			rk915_dbg(RK915_DBG_TX, "%s-UMACTX:WARNING: ", priv->name);
+			rk915_dbg(RK915_DBG_TX, "TX complete failed!!\n");
+			rk915_dbg(RK915_DBG_TX, "%s-UMACTX:After ", priv->name);
+			rk915_dbg(RK915_DBG_TX, "%ld: bitmap is: 0x%lx\n",
+				TX_COMPLETE_TIMEOUT_TICKS,
+				tx->buf_pool_bmp[0]);
 			break;
 		}
 	}
 
 	if (count && (count < TX_COMPLETE_TIMEOUT_TICKS)) {
-		RPU_DEBUG_TX("%s-UMACTX:TX complete after %d timer ticks\n",
+		rk915_dbg(RK915_DBG_TX, "%s-UMACTX:TX complete after %d timer ticks\n",
 			priv->name, count);
 	}
 }
@@ -224,36 +168,36 @@ static int check_80211_aggregation(struct img_priv *priv,
 	is_qos = ieee80211_is_data_qos(mac_hdr->frame_control);
 
 	/* RPU has a limitation, it expects A1-A2-A3 to be same
-	* for all MPDU's within an AMPDU. This is a temporary
-	* solution, remove it when RPU has fix for this.
-	*/
+	 * for all MPDU's within an AMPDU. This is a temporary
+	 * solution, remove it when RPU has fix for this.
+	 */
 	if (skb_first &&
-	    ((!ether_addr_equal(mac_hdr->addr1,
-		       mac_hdr_first->addr1)) ||
-	    (!ether_addr_equal(mac_hdr->addr2,
-		       mac_hdr_first->addr2)) ||
-	    (!ether_addr_equal(mac_hdr->addr3,
-		       mac_hdr_first->addr3)))) {
+		((!ether_addr_equal(mac_hdr->addr1,
+			mac_hdr_first->addr1)) ||
+		(!ether_addr_equal(mac_hdr->addr2,
+			mac_hdr_first->addr2)) ||
+		(!ether_addr_equal(mac_hdr->addr3,
+			mac_hdr_first->addr3)))) {
 		addr = false;
 	}
 
 	/*stats and debug*/
 	if (!is_qos) {
-		RPU_DEBUG_TX("Not Qos\n");
+		rk915_dbg(RK915_DBG_TX, "Not Qos\n");
 		priv->stats->tx_noagg_not_qos++;
 	} else if (!ampdu) {
-		RPU_DEBUG_TX("Not AMPDU\n");
+		rk915_dbg(RK915_DBG_TX, "Not AMPDU\n");
 		priv->stats->tx_noagg_not_ampdu++;
 	} else if (!addr) {
 		if (skb_first) {
-			RPU_DEBUG_TX("first: A1: %pM-A2:%pM -A3%pM not same\n",
-				      mac_hdr_first->addr1,
-				      mac_hdr_first->addr2,
-				      mac_hdr_first->addr3);
-			RPU_DEBUG_TX("curr:  A1: %pM-A2:%pM -A3%pM not same\n",
-				      mac_hdr->addr1,
-				      mac_hdr->addr2,
-				      mac_hdr->addr3);
+			rk915_dbg(RK915_DBG_TX, "first: A1: %pM-A2:%pM -A3%pM not same\n",
+					mac_hdr_first->addr1,
+					mac_hdr_first->addr2,
+					mac_hdr_first->addr3);
+			rk915_dbg(RK915_DBG_TX, "curr:  A1: %pM-A2:%pM -A3%pM not same\n",
+					mac_hdr->addr1,
+					mac_hdr->addr2,
+					mac_hdr->addr3);
 		}
 		priv->stats->tx_noagg_not_addr++;
 	}
@@ -263,18 +207,15 @@ static int check_80211_aggregation(struct img_priv *priv,
 
 
 static void tx_status(struct sk_buff *skb,
-		      struct umac_event_tx_done *tx_done,
-		      unsigned int frame_idx,
-		      struct img_priv *priv,
-		      struct ieee80211_tx_info tx_info_1st_mpdu)
+			struct umac_event_tx_done *tx_done,
+			unsigned int frame_idx,
+			struct img_priv *priv,
+			struct ieee80211_tx_info tx_info_1st_mpdu)
 {
-	int index, i;
-	char idx = 0;
+	int index;
 	struct ieee80211_tx_rate *txrate;
 	struct ieee80211_tx_rate *tx_inf_rate = NULL;
 	struct ieee80211_tx_info *tx_info = IEEE80211_SKB_CB(skb);
-	int tx_fixed_mcs_idx = 0;
-	int tx_fixed_rate = 0;
 	struct ieee80211_supported_band *band = NULL;
 	struct umac_vif *uvif = NULL;
 	int ret = 0;
@@ -292,7 +233,7 @@ static void tx_status(struct sk_buff *skb,
 	ieee80211_tx_info_clear_status(tx_info);
 
 	if (tx_done->retries_num[frame_idx] > 0) {
-		//RPU_INFO_TX("retries_num[%d] %d\n", frame_idx, tx_done->retries_num[frame_idx]);
+		//rk915_dbg(RK915_DBG_TX, "retries_num[%d] %d\n", frame_idx, tx_done->retries_num[frame_idx]);
 		priv->tx_retry_frm_cnt++;
 	}
 
@@ -315,49 +256,12 @@ static void tx_status(struct sk_buff *skb,
 		if (txrate->idx < 0)
 			break;
 
-		if ((priv->params->production_test == 1) &&
-		    ((priv->params->tx_fixed_mcs_indx != -1) ||
-		     (priv->params->tx_fixed_rate != -1))) {
-			tx_fixed_mcs_idx = priv->params->tx_fixed_mcs_indx;
-			tx_fixed_rate = priv->params->tx_fixed_rate;
-
-			/* This index is always zero */
-			/* TODO: See if we need to send channel bw information
-			 * taken from proc, since in Production mode the bw
-			 * advised by Minstrel can be overwritten by proc
-			 * settings
-			 */
-			tx_inf_rate->flags = txrate->flags;
-
-			if (tx_fixed_mcs_idx != -1) {
-				if (priv->params->prod_mode_rate_flag & ENABLE_11N_FORMAT) {
-					tx_inf_rate->flags |=
-						IEEE80211_TX_RC_MCS;
-					/* So that actual sent rate is seen in
-					 * sniffer
-					 */
-					idx = tx_done->rate[frame_idx] & 0x7F;
-					tx_inf_rate->idx = idx;
-				} else 
-				if (tx_fixed_rate != -1) {
-					for (i = 0; i < band->n_bitrates; i++) {
-						if ((band->bitrates[i]).hw_value ==
-						    tx_done->rate[frame_idx])
-							tx_inf_rate->idx = i;
-					}
-				}
-			}
-
-			tx_inf_rate->count = (tx_done->retries_num[frame_idx] +
-					      1);
-			break;
-		}
 
 		if ((tx_done->rate[frame_idx] &
-		     MARK_RATE_AS_MCS_INDEX) == 0x80) {
+			MARK_RATE_AS_MCS_INDEX) == 0x80) {
 			if ((txrate->flags & IEEE80211_TX_RC_MCS) &&
 				   ((tx_done->rate[frame_idx] & 0x7F) ==
-				    (txrate->idx & 0x7F))) {
+					(txrate->idx & 0x7F))) {
 				tx_inf_rate->count =
 					(tx_done->retries_num[frame_idx] + 1);
 			}
@@ -380,30 +284,32 @@ static void tx_status(struct sk_buff *skb,
 	}
 
 	if (((tx_info->flags & IEEE80211_TX_CTL_TX_OFFCHAN)
-	    ) &&
-	    (atomic_dec_return(&priv->roc_params.roc_mgmt_tx_count) == 0)) {
-		RPU_DEBUG_ROC("%s:%d TXDONE Frame: %d\n",
+		) &&
+		(atomic_dec_return(&priv->roc_params.roc_mgmt_tx_count) == 0)) {
+		rk915_dbg(RK915_DBG_ROC, "%s:%d TXDONE Frame: %d\n",
 			__func__,
 			__LINE__,
 			atomic_read(&priv->roc_params.roc_mgmt_tx_count));
 		if (priv->roc_params.roc_in_progress &&
-		    priv->roc_params.roc_type == ROC_TYPE_OFFCHANNEL_TX) {
-			CALL_RPU(rpu_prog_roc, ROC_STOP, 0, 0, 0);
-			RPU_DEBUG_ROC("%s:%d", __func__, __LINE__);
-			RPU_DEBUG_ROC("all offchan pending frames cleared\n");
+			priv->roc_params.roc_type == ROC_TYPE_OFFCHANNEL_TX) {
+			ret = rpu_prog_roc(ROC_STOP, 0, 0, 0);
+			if (ret != 0)
+				goto prog_rpu_fail;
+			rk915_dbg(RK915_DBG_ROC, "%s:%d", __func__, __LINE__);
+			rk915_dbg(RK915_DBG_ROC, "all offchan pending frames cleared\n");
 		}
 	}
 
 	priv->stats->tx_dones_to_stack++;
 
-	ieee80211_tx_status_skb(priv->hw, skb);
+	ieee80211_tx_status_ni(priv->hw, skb);
 prog_rpu_fail:
 	return;
 }
 
 
 int get_token(struct img_priv *priv,
-		     int queue)
+			int queue)
 {
 	int cnt = 0;
 	int curr_bit = 0;
@@ -428,12 +334,12 @@ int get_token(struct img_priv *priv,
 	 */
 	if ((cnt == NUM_TX_DESCS_PER_AC) && (queue != WLAN_AC_BCN)) {
 		for (token_id = NUM_TX_DESCS_PER_AC * NUM_ACS;
-		     token_id < NUM_TX_DESCS;
-		     token_id++) {
+			token_id < NUM_TX_DESCS;
+			token_id++) {
 			curr_bit = (token_id % TX_DESC_BUCKET_BOUND);
 			pool_id = (token_id / TX_DESC_BUCKET_BOUND);
 			if (!test_and_set_bit(curr_bit,
-					      &tx->buf_pool_bmp[pool_id])) {
+						&tx->buf_pool_bmp[pool_id])) {
 				tx->outstanding_tokens[queue]++;
 				break;
 			}
@@ -470,10 +376,10 @@ void free_token(struct img_priv *priv,
 
 	test = tx->outstanding_tokens[queue];
 	if (WARN_ON_ONCE(test < 0 || test > 4)) {
-		RPU_ERROR_TX("%s: invalid outstanding_tokens: %d, old:%d\n",
-			      __func__,
-			      test,
-			      old_token);
+		rk915_err("%s: invalid outstanding_tokens: %d, old:%d\n",
+				__func__,
+				test,
+				old_token);
 	}
 }
 
@@ -493,8 +399,6 @@ struct curr_peer_info get_curr_peer_opp(struct img_priv *priv,
 	tx = &priv->tx;
 
 	init_peer_opp = tx->curr_peer_opp[ac];
-	/*TODO: Optimize this loop for BCN_Q
-	 */
 	for (i = 0; i < MAX_PEND_Q_PER_AC; i++) {
 		curr_peer_opp = (init_peer_opp + i) % MAX_PEND_Q_PER_AC;
 
@@ -514,12 +418,12 @@ struct curr_peer_info get_curr_peer_opp(struct img_priv *priv,
 	} else {
 		peer_info.id = curr_peer_opp;
 		peer_info.op_chan_idx = curr_vif_op_chan;
-		RPU_DEBUG_TX("%s: Queue: %d Peer: %d op_chan: %d ",
+		rk915_dbg(RK915_DBG_TX, "%s: Queue: %d Peer: %d op_chan: %d ",
 			__func__,
 			ac,
 			curr_peer_opp,
 			curr_vif_op_chan);
-		RPU_DEBUG_TX("Pending: %d\n",
+		rk915_dbg(RK915_DBG_TX, "Pending: %d\n",
 			pend_q_len);
 	}
 
@@ -539,13 +443,13 @@ static int get_outstanding_pkts(struct tx_config *tx, int token_id)
 		bit = (i % TX_DESC_BUCKET_BOUND);
 		pool_id = (i / TX_DESC_BUCKET_BOUND);
 		if (test_bit(bit, &tx->buf_pool_bmp[pool_id])) {
-			//RPU_DEBUG_TX("%s: outstanding_pkts[%d] = %d\n",
+			//rk915_dbg(RK915_DBG_TX, "%s: outstanding_pkts[%d] = %d\n",
 			//	__func__, i, tx->outstanding_pkts[i]);
 			count += tx->outstanding_pkts[i];
 		}
 	}
 	if (count >= MAX_FW_TX_PKGS) {
-		RPU_INFO_TX("%s: count(%d), reached MAX_FW_TX_PKGS(%d) (%d)\n",
+		rk915_dbg(RK915_DBG_TX, "%s: count(%d), reached MAX_FW_TX_PKGS(%d) (%d)\n",
 					__func__, count, MAX_FW_TX_PKGS, token_id);
 		count = MAX_FW_TX_PKGS;
 	}
@@ -576,12 +480,12 @@ int rpu_tx_proc_pend_frms(struct img_priv *priv,
 	struct sk_buff *skb_first;
 
 	if (block_rpu_comm) {
-		RPU_INFO_TX("%s: skip with block_rpu_comm\n", __func__);
+		rk915_dbg(RK915_DBG_TX, "%s: skip with block_rpu_comm\n", __func__);
 		return 0;
 	}
 
 	peer_info = get_curr_peer_opp(priv,
-				       ac);
+					ac);
 
 	/* No pending frames for any peer in that AC.
 	 */
@@ -593,22 +497,17 @@ int rpu_tx_proc_pend_frms(struct img_priv *priv,
 	pkt_info = &priv->tx.pkt_info[token_id];
 	txq = &pkt_info->pkt;
 
-#if 0
-	fw_free_pkts = max_tx_cmds;
-#else
 	fw_free_pkts = MAX_FW_TX_PKGS - get_outstanding_pkts(tx, token_id);
-	if (fw_free_pkts == 0 && token_id != WLAN_AC_BCN) {
+	if (fw_free_pkts == 0 && token_id != WLAN_AC_BCN)
 		return 0;
-	}
-#endif
 
 	/* Aggregate Only MPDU's with same RA, same Rate,
 	 * same Rate flags, same Tx Info flags
 	 */
 	skb_first = skb_peek(pend_pkt_q);
 	skb_queue_walk_safe(pend_pkt_q,
-			    loop_skb,
-			    tmp) {
+				loop_skb,
+				tmp) {
 		data = loop_skb->data;
 		mac_hdr = (struct ieee80211_hdr *)data;
 
@@ -620,10 +519,10 @@ int rpu_tx_proc_pend_frms(struct img_priv *priv,
 		ampdu_len += loop_skb->len;
 
 		if (!check_80211_aggregation(priv,
-					     loop_skb,
-					     skb_first) ||
-		    (skb_queue_len(txq) >= max_tx_cmds) ||
-		    (skb_queue_len(txq) >= fw_free_pkts)) {
+						loop_skb,
+						skb_first) ||
+			(skb_queue_len(txq) >= max_tx_cmds) ||
+			(skb_queue_len(txq) >= fw_free_pkts)) {
 			break;
 		}
 		loop_cnt++;
@@ -642,27 +541,27 @@ int rpu_tx_proc_pend_frms(struct img_priv *priv,
 
 	pend_pkt_q_len = skb_queue_len(pend_pkt_q);
 	if ((ac != WLAN_AC_BCN) &&
-	    (tx->queue_stopped_bmp & (1 << ac)) &&
-	    pend_pkt_q_len < (MAX_TX_QUEUE_LEN / 2)) {
+		(tx->queue_stopped_bmp & (1 << ac)) &&
+		pend_pkt_q_len < (MAX_TX_QUEUE_LEN / 2)) {
 		ieee80211_wake_queue(priv->hw, tx_queue_unmap(ac));
 		tx->queue_stopped_bmp &= ~(1 << (ac));
 	}
 
 	pkt_info->peer_id = peer_info.id;
-	RPU_DEBUG_TX("%s-UMACTX: token_id: %d ",
+	rk915_dbg(RK915_DBG_TX, "%s-UMACTX: token_id: %d ",
 				priv->name,
 				token_id);
-	RPU_DEBUG_TX("total_pending_packets_process: %d\n",
+	rk915_dbg(RK915_DBG_TX, "total_pending_packets_process: %d\n",
 		skb_queue_len(txq));
 
 	return total_pending_processed;
 }
 
 
-int rpu_tx_alloc_token(struct img_priv *priv,
-			       int ac,
-			       int peer_id,
-			       struct sk_buff *skb)
+static int rpu_tx_alloc_token(struct img_priv *priv,
+				int ac,
+				int peer_id,
+				struct sk_buff *skb)
 {
 	int token_id = NUM_TX_DESCS;
 	struct tx_config *tx = &priv->tx;
@@ -673,10 +572,10 @@ int rpu_tx_alloc_token(struct img_priv *priv,
 
 	spin_lock_bh(&tx->lock);
 	pend_pkt_q = &tx->pending_pkt[peer_id][ac];
-	RPU_DEBUG_TX("%s-UMACTX:Alloc buf Req q = %d\n",
-		      priv->name,
-		      ac);
-	RPU_DEBUG_TX("peerid: %d,\n", peer_id);
+	rk915_dbg(RK915_DBG_TX, "%s-UMACTX:Alloc buf Req q = %d\n",
+			priv->name,
+			ac);
+	rk915_dbg(RK915_DBG_TX, "peerid: %d,\n", peer_id);
 
 	/* Queue the frame to the pending frames queue */
 	skb_queue_tail(pend_pkt_q, skb);
@@ -688,8 +587,8 @@ int rpu_tx_alloc_token(struct img_priv *priv,
 
 		skb_first = skb_peek(pend_pkt_q);
 		agg_status = check_80211_aggregation(priv,
-						     skb,
-						     skb_first);
+							skb,
+							skb_first);
 
 		if (agg_status || !priv->params->enable_early_agg_checks) {
 			int max_cmds = priv->params->max_tx_cmds;
@@ -698,12 +597,12 @@ int rpu_tx_alloc_token(struct img_priv *priv,
 			 * supported (priv->params->max_tx_cmds)
 			 */
 			if (skb_queue_len(pend_pkt_q) < max_cmds) {
-				RPU_DEBUG_TX("pend_q not full out_tok:%d\n",
-					      tx->outstanding_tokens[ac]);
+				rk915_dbg(RK915_DBG_TX, "pend_q not full out_tok:%d\n",
+						tx->outstanding_tokens[ac]);
 				goto out;
-			 } else {
-				RPU_DEBUG_TX("pend_q full out_tok:%d\n",
-					      tx->outstanding_tokens[ac]);
+			} else {
+				rk915_dbg(RK915_DBG_TX, "pend_q full out_tok:%d\n",
+						tx->outstanding_tokens[ac]);
 			}
 		}
 	}
@@ -717,22 +616,22 @@ int rpu_tx_alloc_token(struct img_priv *priv,
 	 */
 	if (skb_queue_len(pend_pkt_q) >= MAX_TX_QUEUE_LEN) {
 		if ((!priv->roc_params.roc_in_progress) ||
-		    (priv->roc_params.roc_in_progress &&
-		     (ac != UMAC_ROC_AC))) {
+			(priv->roc_params.roc_in_progress &&
+			(ac != UMAC_ROC_AC))) {
 			ieee80211_stop_queue(priv->hw,
-					     skb->queue_mapping);
+						skb->queue_mapping);
 			tx->queue_stopped_bmp |= (1 << ac);
 		}
 	}
 
 	token_id = get_token(priv,
-			     ac);
+				ac);
 
-	RPU_DEBUG_TX("%s-UMACTX:Alloc buf Result *id= %d q = %d out_tok: %d",
+	rk915_dbg(RK915_DBG_TX, "%s-UMACTX:Alloc buf Result *id= %d q = %d out_tok: %d",
 					priv->name,
 					token_id,
 					ac, tx->outstanding_tokens[ac]);
-	RPU_DEBUG_TX(", peerid: %d,\n", peer_id);
+	rk915_dbg(RK915_DBG_TX, ", peerid: %d,\n", peer_id);
 
 	if (token_id == NUM_TX_DESCS)
 		goto out;
@@ -753,7 +652,7 @@ int rpu_tx_alloc_token(struct img_priv *priv,
 out:
 	spin_unlock_bh(&tx->lock);
 
-	RPU_DEBUG_TX("%s-UMACTX:Alloc buf Result *id= %d out_tok:%d\n",
+	rk915_dbg(RK915_DBG_TX, "%s-UMACTX:Alloc buf Result *id= %d out_tok:%d\n",
 					priv->name,
 					token_id, tx->outstanding_tokens[ac]);
 	/* If token is available, just return tokenid, list will be sent*/
@@ -788,10 +687,10 @@ int rpu_tx_free_buff_req(struct img_priv *priv,
 
 	spin_lock_bh(&tx->lock);
 
-	RPU_DEBUG_TX("%s-UMACTX:Free buf Req q = %d",
+	rk915_dbg(RK915_DBG_TX, "%s-UMACTX:Free buf Req q = %d",
 				priv->name,
 				tx_done->queue);
-	RPU_DEBUG_TX(", desc_id: %d out_tok: %d\n",
+	rk915_dbg(RK915_DBG_TX, ", desc_id: %d out_tok: %d\n",
 				desc_id,
 				priv->tx.outstanding_tokens[tx_done->queue]);
 
@@ -803,7 +702,7 @@ int rpu_tx_free_buff_req(struct img_priv *priv,
 		/* Cut the list to new one, tx_pkt will be re-initialized */
 		skb_queue_splice_tail_init(skb_list, &tx_done_list);
 	} else {
-		RPU_DEBUG_TX("%s-UMACTX:Got Empty List: list_addr: %p\n",
+		rk915_dbg(RK915_DBG_TX, "%s-UMACTX:Got Empty List: list_addr: %p\n",
 						priv->name,
 						skb_list);
 	}
@@ -823,8 +722,8 @@ int rpu_tx_free_buff_req(struct img_priv *priv,
 	}
 	for (cnt = start_ac; cnt >= end_ac; cnt--) {
 		pkts_pend = rpu_tx_proc_pend_frms(priv,
-					      cnt,
-					      desc_id);
+						cnt,
+						desc_id);
 
 		if (pkts_pend) {
 			*ac = cnt;
@@ -841,11 +740,11 @@ int rpu_tx_free_buff_req(struct img_priv *priv,
 	/* Unmap here before release lock to avoid race */
 	if (skb_queue_len(&tx_done_list)) {
 		skb_queue_walk_safe(&tx_done_list, skb, tmp) {
-			hal_ops.unmap_tx_buf(tx_done->descriptor_id, pkt);
-			RPU_DEBUG_TX("%s-UMACTX:TXDONE: ID=%d",
+			hal_ops.unmap_tx_buf(priv->hal, tx_done->descriptor_id, pkt);
+			rk915_dbg(RK915_DBG_TX, "%s-UMACTX:TXDONE: ID=%d",
 				priv->name,
 				tx_done->descriptor_id);
-			RPU_DEBUG_TX("Stat=%d (%d, %d)\n",
+			rk915_dbg(RK915_DBG_TX, "Stat=%d (%d, %d)\n",
 				tx_done->frm_status[pkt],
 				tx_done->rate[pkt],
 				tx_done->retries_num[pkt]);
@@ -872,8 +771,8 @@ int rpu_tx_free_buff_req(struct img_priv *priv,
 	skb_first = skb_peek(&tx_done_list);
 
 	memcpy(&tx_info_1st_mpdu,
-	       (struct ieee80211_tx_info *)IEEE80211_SKB_CB(skb_first),
-	       sizeof(struct ieee80211_tx_info));
+		(struct ieee80211_tx_info *)IEEE80211_SKB_CB(skb_first),
+		sizeof(struct ieee80211_tx_info));
 
 	pkt = 0;
 
@@ -891,7 +790,7 @@ int rpu_tx_free_buff_req(struct img_priv *priv,
 
 		if (!ieee80211_is_beacon(mac_hdr->frame_control)) {
 			vif_index = vif_addr_to_index(mac_hdr->addr2,
-						      priv);
+							priv);
 			if (vif_index > -1)
 				*vif_index_bitmap |= (1 << vif_index);
 
@@ -906,7 +805,7 @@ int rpu_tx_free_buff_req(struct img_priv *priv,
 			bool bcn_status;
 
 			if (tx_done->frm_status[pkt] ==
-			    TX_DONE_STAT_DISCARD_BCN) {
+				TX_DONE_STAT_DISCARD_BCN) {
 				/* We did not send beacon */
 				priv->tx_last_beacon = 0;
 			} else if (tx_done->frm_status[pkt] ==
@@ -927,7 +826,7 @@ int rpu_tx_free_buff_req(struct img_priv *priv,
 			for (i = 0; i < MAX_VIFS; i++) {
 				if (priv->active_vifs & (1 << i)) {
 					if ((priv->vifs[i] == ivif) &&
-					    (bcn_status == true)) {
+						(bcn_status == true)) {
 						mod_timer(&uvif->bcn_timer,
 							  jiffies +
 							  bcn_int);
@@ -956,23 +855,21 @@ void rpu_tx_init(struct img_priv *priv)
 	struct tx_config *tx = &priv->tx;
 
 	memset(&tx->buf_pool_bmp,
-	       0,
-	       sizeof(long) * ((NUM_TX_DESCS/TX_DESC_BUCKET_BOUND) + 1));
+		0,
+		sizeof(long) * ((NUM_TX_DESCS/TX_DESC_BUCKET_BOUND) + 1));
 
 	tx->queue_stopped_bmp = 0;
 	tx->next_spare_token_ac = WLAN_AC_BE;
 
 	for (i = 0; i < NUM_ACS; i++) {
-		for (j = 0; j < MAX_PEND_Q_PER_AC; j++) {
-				skb_queue_head_init(&tx->pending_pkt[j][i]);
-		}
+		for (j = 0; j < MAX_PEND_Q_PER_AC; j++)
+			skb_queue_head_init(&tx->pending_pkt[j][i]);
 
 		tx->outstanding_tokens[i] = 0;
 	}
 
-	for (i = 0; i < NUM_TX_DESCS; i++) {
+	for (i = 0; i < NUM_TX_DESCS; i++)
 		skb_queue_head_init(&tx->pkt_info[i].pkt);
-	}
 
 	for (j = 0; j < NUM_ACS; j++)
 		tx->curr_peer_opp[j] = 0;
@@ -985,7 +882,7 @@ void rpu_tx_init(struct img_priv *priv)
 	spin_lock_init(&tx->lock);
 	ieee80211_wake_queues(priv->hw);
 
-	RPU_DEBUG_TX("%s-UMACTX: initialization successful\n",
+	rk915_dbg(RK915_DBG_TX, "%s-UMACTX: initialization successful\n",
 			TX_TO_MACDEV(tx)->name);
 }
 
@@ -1020,7 +917,7 @@ void rpu_tx_deinit(struct img_priv *priv)
 
 	spin_unlock_bh(&tx->lock);
 
-	RPU_DEBUG_TX("%s-UMACTX: deinitialization successful\n",
+	rk915_dbg(RK915_DBG_TX, "%s-UMACTX: deinitialization successful\n",
 			TX_TO_MACDEV(tx)->name);
 }
 
@@ -1042,8 +939,8 @@ int __rpu_tx_frame(struct img_priv *priv,
 				  retry);
 
 	if (ret < 0) {
-		RPU_ERROR_TX("%s-UMACTX: Unable to send frame, dropping ..%d\n",
-		       priv->name, ret);
+		rk915_err("%s-UMACTX: Unable to send frame, dropping ..%d\n",
+			priv->name, ret);
 
 		memset(&tx_done, 0, sizeof(struct umac_event_tx_done));
 		tx_done.descriptor_id = token_id;
@@ -1061,13 +958,6 @@ int __rpu_tx_frame(struct img_priv *priv,
 	}
 
 	return ret;
-}
-
-static void rpu_tx_wake_lock(void)
-{
-	if (wake_lock_active(&hpriv->fw_err_lock))
-		wake_unlock(&hpriv->fw_err_lock);
-	wake_lock_timeout(&hpriv->fw_err_lock, msecs_to_jiffies(3*1000));
 }
 
 int rpu_tx_frame(struct sk_buff *skb,
@@ -1088,19 +978,12 @@ int rpu_tx_frame(struct sk_buff *skb,
 	uvif = (struct umac_vif *)(tx_info->control.vif->drv_priv);
 	mac_hdr = (struct ieee80211_hdr *)(skb->data);
 
-	if (ieee80211_is_data(mac_hdr->frame_control))
-		rpu_tx_wake_lock();
-
 	if (sta) {
 		usta = (struct umac_sta *)sta->drv_priv;
 		peer_id = usta->index;
 	} else {
 		peer_id = MAX_PEERS + uvif->vif_index;
 
-#ifdef STA_AP_COEXIST
-		if (uvif->vif && uvif->vif->type == NL80211_IFTYPE_AP)
-			adjust_beacon_ie(priv, skb);
-#endif
 	}
 
 	if (bcast == false) {
@@ -1115,16 +998,13 @@ int rpu_tx_frame(struct sk_buff *skb,
 	if (!ieee80211_is_beacon(mac_hdr->frame_control))
 		priv->stats->tx_cmds_from_stack++;
 
-	if (priv->params->production_test == 1)
-		tx_info->flags |= IEEE80211_TX_CTL_AMPDU;
 
 
-
-	RPU_DEBUG_TX("%s-UMACTX:%s:%d ",
+	rk915_dbg(RK915_DBG_TX, "%s-UMACTX:%s:%d ",
 			priv->name,
 			 __func__,
 			 __LINE__);
-	RPU_DEBUG_TX("Wait Alloc:queue: %d qmap: %d is_bcn: %d bcast:%d\n",
+	rk915_dbg(RK915_DBG_TX, "Wait Alloc:queue: %d qmap: %d is_bcn: %d bcast:%d\n",
 			queue,
 			skb->queue_mapping,
 			ieee80211_is_beacon(mac_hdr->frame_control),
@@ -1137,35 +1017,28 @@ int rpu_tx_frame(struct sk_buff *skb,
 
 	/* The frame was unable to find a reserved token */
 	if (token_id == NUM_TX_DESCS) {
-		RPU_DEBUG_TX("%s-UMACTX:%s:%d Token Busy Queued:\n",
+		rk915_dbg(RK915_DBG_TX, "%s-UMACTX:%s:%d Token Busy Queued:\n",
 			priv->name, __func__, __LINE__);
 		return NETDEV_TX_OK;
 	}
 
 	ret = __rpu_tx_frame(priv,
-				     queue,
-				     token_id,
-				     more_frames,
-				     0);
+					queue,
+					token_id,
+					more_frames,
+					0);
 
 
 	return NETDEV_TX_OK;
 }
 
-extern void rpu_prog_tx_send(void *skb);
+extern void rpu_prog_tx_send(struct img_priv *priv, void *skb);
 
-static void make_null_frame(struct ieee80211_hdr_3addr *nullfunc, int index)
+static void make_null_frame(struct img_priv *priv,
+			    struct ieee80211_hdr_3addr *nullfunc, int index)
 {
-	struct img_priv *priv = wifi->hw->priv;
 
-#ifdef RPU_ENABLE_PS
-	if (priv->power_save == PWRSAVE_STATE_AWAKE)
-		nullfunc->frame_control = 0x0148;
-	else
-		nullfunc->frame_control = 0x1148;
-#else
 	nullfunc->frame_control = 0x0148;
-#endif
 	nullfunc->duration_id = 0x0034;
 	memcpy(nullfunc->addr1, priv->vif_info.bssid[index], ETH_ALEN);
 	memcpy(nullfunc->addr2, priv->vif_info.vif_addr[index], ETH_ALEN);
@@ -1200,7 +1073,7 @@ static void make_cmd_tx_ctrl(struct cmd_tx_ctrl *tx_cmd, void *data, int length,
 
 	tx_cmd->config_mac_hdr_len = sizeof(struct ieee80211_hdr_3addr);
 	memcpy(tx_cmd->config_mac_header, data,
-	      tx_cmd->config_mac_hdr_len );
+		tx_cmd->config_mac_hdr_len);
 
 	tx_cmd->per_pkt_crypto_params[0][0] = 0x10;
 }
@@ -1239,12 +1112,12 @@ void rpu_send_nullframe(struct img_priv *priv)
 	priv->null_frame_sending = 1;
 	priv->null_frame_send_count++;
 	tx_cmd = (struct cmd_tx_ctrl *)cmd_skb->data;
-	make_null_frame((struct ieee80211_hdr_3addr *)data_skb->data, index);
+	make_null_frame(priv, (struct ieee80211_hdr_3addr *)data_skb->data, index);
 	make_cmd_tx_ctrl(tx_cmd, (void *)data_skb->data,
 			sizeof(struct ieee80211_hdr_3addr), desc_id, queue, index);
 	priv->null_frame_skb = data_skb;
 
-	rpu_prog_tx_send(cmd_skb);
+	rpu_prog_tx_send(priv, cmd_skb);
 	priv->stats->tx_cmd_send_count_single++;
 
 	spin_unlock_bh(&priv->tx.lock);
@@ -1270,7 +1143,7 @@ void rpu_send_nullframe_cmp(struct img_priv *priv, int token_id, int queue)
 }
 
 void rpu_tx_complete(struct umac_event_tx_done *tx_done,
-			     void *context)
+				void *context)
 {
 	struct img_priv *priv = (struct img_priv *)context;
 	unsigned int more_frames = 0;
@@ -1282,19 +1155,24 @@ void rpu_tx_complete(struct umac_event_tx_done *tx_done,
 	int qlen = 0;
 
 	token_id = tx_done->descriptor_id;
-	//RPU_INFO_TX("tx done %d %d\n", token_id, tx_done->queue);
+	//rk915_dbg(RK915_DBG_TX, "tx done %d %d\n", token_id, tx_done->queue);
 
-	if (token_id < 0 || token_id > 11) {
-		RPU_ERROR_TX("%s:%d Invalid token_id: %d\n",
-			     __func__,
-			     __LINE__,
-			     token_id);
-		RPU_DEBUG_DUMP_TX(DUMP_PREFIX_NONE,
-			          16,
-			          1,
-			          tx_done,
-			          sizeof(struct umac_event_tx_done),
-			          1);
+	if (tx_done->queue >= NUM_ACS) {
+		rk915_err("bad tx_done queue %u\n", tx_done->queue);
+		return;
+	}
+
+	if (token_id < 0 || token_id >= NUM_TX_DESCS) {
+		rk915_err("%s:%d Invalid token_id: %d\n",
+				__func__,
+				__LINE__,
+				token_id);
+		rk915_dbg_dump(RK915_DBG_DUMP_TX, " ", DUMP_PREFIX_NONE,
+				  16,
+				  1,
+				  tx_done,
+				  sizeof(struct umac_event_tx_done),
+				  1);
 		return;
 	}
 
@@ -1313,10 +1191,10 @@ void rpu_tx_complete(struct umac_event_tx_done *tx_done,
 
 	qlen = skb_queue_len(&priv->tx.pkt_info[token_id].pkt);
 
-	RPU_DEBUG_TX("%s-UMACTX:TX Done Rx for desc_id: %d",
+	rk915_dbg(RK915_DBG_TX, "%s-UMACTX:TX Done Rx for desc_id: %d",
 			  priv->name,
 			  tx_done->descriptor_id);
-	RPU_DEBUG_TX("Q: %d qlen: %d status: %d out_tok: %d\n",
+	rk915_dbg(RK915_DBG_TX, "Q: %d qlen: %d status: %d out_tok: %d\n",
 			  tx_done->queue,
 			  qlen,
 			  tx_done->frm_status[0],
@@ -1325,27 +1203,29 @@ void rpu_tx_complete(struct umac_event_tx_done *tx_done,
 	update_aux_adc_voltage(priv, tx_done->pdout_voltage);
 
 	pkts_pending = rpu_tx_free_buff_req(priv,
-						    tx_done,
-						    &queue,
-						    &vif_index_bitmap);
+							tx_done,
+							&queue,
+							&vif_index_bitmap);
 
 	if (pkts_pending) {
-		/*TODO..Do we need to check each skb for more_frames??*/
+		/* never hint at buffered frames: the firmware handles
+		 * power-save delivery itself
+		 */
 		more_frames = 0;
 
-		RPU_DEBUG_TX("%s-UMACTX:%s:%d Transfer Pending Frames:\n",
-			       priv->name,
-			       __func__,
-			       __LINE__);
+		rk915_dbg(RK915_DBG_TX, "%s-UMACTX:%s:%d Transfer Pending Frames:\n",
+				priv->name,
+				__func__,
+				__LINE__);
 
 		ret = __rpu_tx_frame(priv,
-					     queue,
-					     token_id,
-					     more_frames,
-					     0);
+						queue,
+						token_id,
+						more_frames,
+						0);
 
 	} else {
-		RPU_DEBUG_TX("%s-UMACTX:No Pending Packets\n", priv->name);
+		rk915_dbg(RK915_DBG_TX, "%s-UMACTX:No Pending Packets\n", priv->name);
 	}
 
 
@@ -1354,22 +1234,24 @@ void rpu_tx_complete(struct umac_event_tx_done *tx_done,
 			memset(&noa_event, 0, sizeof(noa_event));
 			noa_event.if_index = vif_index;
 			rpu_noa_event(FROM_TX_DONE,
-					      &noa_event,
-					      (void *)priv,
-					      NULL);
+						&noa_event,
+						(void *)priv,
+						NULL);
 		}
 	}
 }
 
 /* process unfinished tx done when fw error happened */
-void rpu_tx_proc_unfi_tx_done(void)
+void rpu_tx_proc_unfi_tx_done(struct img_priv *priv)
 {
 	int i, j;
 	struct umac_event_tx_done tx_done;
 	struct umac_event_tx_done *ptx_done;
-	struct img_priv *priv = wifi->hw->priv;
 
-	RPU_DEBUG_ROCOVERY("%s: buf_pool_bmp = %x\n", __func__, (unsigned int)priv->tx.buf_pool_bmp[0]);
+	if (!priv)
+		return;
+
+	rk915_dbg(RK915_DBG_RECOVERY, "%s: buf_pool_bmp = %x\n", __func__, (unsigned int)priv->tx.buf_pool_bmp[0]);
 	for (i = 0; i < NUM_TX_DESCS; i++) {
 		if (test_bit(i, &priv->tx.buf_pool_bmp[0])) {
 			if (priv->tx.tx_desc_had_send_to_io[i] == 0)
@@ -1387,13 +1269,13 @@ void rpu_tx_proc_unfi_tx_done(void)
 			ptx_done->queue = priv->tx.pkt_info[i].queue;
 			ptx_done->descriptor_id = i;
 
-			for(j = 0; j < MAX_TX_CMDS; j++) {
+			for (j = 0; j < MAX_TX_CMDS; j++) {
 				ptx_done->frm_status[j] = TX_DONE_STAT_SUCCESS;
 				ptx_done->retries_num[j] = 0;
 				ptx_done->rate[j] = 2;
 			}
 
-			RPU_DEBUG_ROCOVERY("desc %d, queue %d\n", i, ptx_done->queue);
+			rk915_dbg(RK915_DBG_RECOVERY, "desc %d, queue %d\n", i, ptx_done->queue);
 			rpu_tx_complete(ptx_done, (void *)priv);
 		}
 	}
