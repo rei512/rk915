@@ -16,14 +16,16 @@
 &sdio {
     cap-sd-highspeed;
     cap-sdio-irq;
+    keep-power-in-suspend;
     mmc-pwrseq = <&sdio_pwrseq>;
     max-frequency = <50000000>;
     no-sd;
     no-mmc;
-    supports-rk912;
+    non-removable;
     status = "okay";
 
     wifi@1 {
+        compatible = "rockchip,rk915";
         reg = <1>;
         interrupt-names = "host-wake";
         interrupt-parent = <&gpio0>;
