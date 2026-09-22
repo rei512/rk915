@@ -138,7 +138,7 @@ struct hal_priv *rk915_core_init(void)
 	struct hal_priv *priv = NULL;
 
 
-	host = kzalloc_obj(struct host_io_info, GFP_KERNEL);
+	host = kzalloc(sizeof(struct host_io_info), GFP_KERNEL);
 	if (!host)
 		goto err;
 
@@ -154,7 +154,7 @@ struct hal_priv *rk915_core_init(void)
 	if (rk915_alloc_firmware_buf(&host->firmware) != 0)
 		goto err;
 
-	priv = kzalloc_obj(struct hal_priv, GFP_KERNEL);
+	priv = kzalloc(sizeof(struct hal_priv), GFP_KERNEL);
 	if (!priv)
 		goto err;
 

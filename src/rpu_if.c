@@ -1582,7 +1582,7 @@ int rpu_scan_abort(int index)
 {
 	struct cmd_scan_abort *scan_abort = NULL;
 
-	scan_abort = kmalloc_obj(*scan_abort, GFP_KERNEL);
+	scan_abort = kmalloc(sizeof(*scan_abort), GFP_KERNEL);
 
 	if (!scan_abort)
 		return -ENOMEM;
@@ -2861,7 +2861,7 @@ int rpu_if_init(void *context, const char *name)
 
 	rk915_dbg(RK915_DBG_IF, "%s-RPUIF: rpu_if init called\n", name);
 
-	p = kzalloc_obj(struct rpu_if_data, GFP_KERNEL);
+	p = kzalloc(sizeof(struct rpu_if_data), GFP_KERNEL);
 
 	if (!p) {
 		WARN_ON(1);

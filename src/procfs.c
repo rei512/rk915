@@ -1080,7 +1080,7 @@ struct wifi_dev *proc_init(struct hal_priv *hal)
 	       94 * 2);
 	set_default_phy_thresh(rf_params, 94);
 
-	wifi = kzalloc_obj(struct wifi_dev, GFP_KERNEL);
+	wifi = kzalloc(sizeof(struct wifi_dev), GFP_KERNEL);
 	if (!wifi) {
 		goto out;
 	}
