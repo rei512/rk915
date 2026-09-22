@@ -12,7 +12,14 @@
 #include "hal_io.h"
 #include "if_io.h"
 
-unsigned int lpw_no_sleep;
+/*
+ * Must stay 1 while the driver has no wake path: letting the LMAC sleep
+ * leaves CMD52 reads returning 0xF0F0 once the link goes idle.
+ */
+unsigned int lpw_no_sleep = 1;
+module_param(lpw_no_sleep, uint, 0444);
+MODULE_PARM_DESC(lpw_no_sleep,
+		 "keep the LMAC permanently awake (default 1; 0 needs a wake path)");
 
 unsigned int default_phy_threshold = DAPT_DEFAULT_PHY_THRESH;
 
