@@ -464,10 +464,16 @@ void rk915_signal_io_error(struct hal_priv *hal, int reason)
 		return;
 	hal->fw_error = 1;
 	rk915_wake_waiters(hal);
-	if (!hal->fw_error_processing) {
+	/*
+	 * The rx and tx threads both signal io errors, and a plain
+	 * test-then-set lets both through: two recoveries start within
+	 * microseconds of each other and ieee80211_restart_hw() is called
+	 * twice, the second landing while the first restart is still in
+	 * flight. Claim the recovery atomically so exactly one runs.
+	 */
+	if (cmpxchg(&hal->fw_error_processing, 0, 1) == 0) {
 		__pm_stay_awake(hal->fw_err_ws);
 
-		hal->fw_error_processing = 1;
 		hal->fw_error_counter++;
 		hal->fw_error_reason = reason;
 
