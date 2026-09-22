@@ -607,6 +607,23 @@ static int start(struct ieee80211_hw *hw)
 	INIT_DELAYED_WORK(&priv->roc_complete_work, rpu_roc_complete_work);
 
 	priv->state = STARTED;
+
+	/*
+	 * mac80211 re-adds every interface after a hardware restart, but it
+	 * never calls remove_interface() for the ones that were up before, and
+	 * the vif accounting is otherwise only cleared by rpu_init() at module
+	 * load. Without this the second restart trips
+	 *
+	 *   rk915: add_interface: Exceeded Maximum supported VIF's cur:2 max: 2
+	 *
+	 * add_interface() returns -ENOTSUPP, mac80211 tears the interface down
+	 * and the link never comes back even though the firmware reloaded
+	 * cleanly. start() is always called before interfaces are re-added, so
+	 * this is the right place to drop the stale accounting.
+	 */
+	priv->current_vif_count = 0;
+	priv->active_vifs = 0;
+
 	memset(priv->params->pdout_voltage, 0,
 		sizeof(char) * MAX_AUX_ADC_SAMPLES);
 
