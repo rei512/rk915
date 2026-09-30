@@ -14,6 +14,8 @@
 };
 
 &sdio {
+    #address-cells = <1>;
+    #size-cells = <0>;
     cap-sd-highspeed;
     cap-sdio-irq;
     keep-power-in-suspend;
