@@ -49,6 +49,10 @@ module_param_named(patch_features, rk915_patch_features, uint, 0444);
 MODULE_PARM_DESC(patch_features,
 		 "firmware feature bits: 1=phy hang reset, 2=filter probe req in ps, 4=filter bcast/mcast in ps, 8=firmware null frames in ps (rejected by fw)");
 
+static char *rk915_macaddr;
+module_param_named(macaddr, rk915_macaddr, charp, 0444);
+MODULE_PARM_DESC(macaddr, "MAC address of wlan0 (xx:xx:xx:xx:xx:xx), before the DT one");
+
 
 int uccp_reinit;
 
@@ -1944,9 +1948,18 @@ static void init_mac_addr(struct hal_priv *hal)
 {
 	struct device *dev = hal->io_info->dev;
 
-	/* MAC from DT (mac-address/local-mac-address/nvmem), else random */
-	if (of_get_mac_address(dev->of_node, vif_macs[0]))
-		eth_random_addr(vif_macs[0]);
+	/*
+	 * MAC from the macaddr parameter, else from DT
+	 * (mac-address/local-mac-address/nvmem), else random. It is fixed here,
+	 * before the interfaces exist: the driver finds wlan0 and p2p0 by
+	 * comparing their address with vif_macs, so changing it later from
+	 * userspace would break that lookup.
+	 */
+	if (!rk915_macaddr || !mac_pton(rk915_macaddr, vif_macs[0]) ||
+	    !is_valid_ether_addr(vif_macs[0])) {
+		if (of_get_mac_address(dev->of_node, vif_macs[0]))
+			eth_random_addr(vif_macs[0]);
+	}
 	img_ether_addr_copy(vif_macs[1], vif_macs[0]);
 
 	/* Set the Locally Administered bit*/
